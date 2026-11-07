@@ -12,6 +12,7 @@ Taskが唯一の管理対象です。以下の技術データはTaskへ紐付き
 | Feedback | id、artifact_version_id、content、applied_to_version_id | 版に紐づく修正指示 |
 | QualityRule | id、content、source_feedback_id、enabled | 明示または反復確認済みの品質ルール |
 | Notification | id、task_id、scheduled_at、status、mode、idempotency_key | 通知予定と配信結果 |
+| TaskSchedule | id、task_id、revision、deadline、start_at、prepare_by、review_by、remind_at、status | 期限に合わせた実行予定 |
 | SyncEvent | id、task_id、field、base_value、remote_revision、status | 同期差分と競合記録 |
 | SourceReference | id、task_id、category、permission_scope、expires_at | 許可範囲と出典の記録 |
 | ExternalActionApproval | id、task_id、target_id、content_hash、operation、expires_at、used_at | 外部操作の個別承認 |
@@ -23,3 +24,5 @@ Task statusはOPEN、IN_PROGRESS、COMPLETED、CANCELLEDです。ai_statusはNOT
 現在のSQLite実装ではTaskとTaskInputのファイルメタデータを保存し、blob本体をローカルディレクトリへ保存します。解析状態は `NOT_PROCESSED` で、画像解析・PDF解析・音声認識は未実装です。
 
 Phase 3ではExecutionJob、WorkPlan、Artifact、ArtifactVersionをSQLiteへ保存します。成果物ファイルはローカルディレクトリへ置き、modeは `mock`、保存状態は `MOCK_SAVED` とします。Google Drive保存とは扱いません。
+
+Phase 4ではTaskScheduleとNotificationをSQLiteへ保存します。期限変更時に以前の予約と未配信通知を取消します。通知箱の状態は `MOCK_DELIVERED` で、実メールを送信しません。

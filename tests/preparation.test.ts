@@ -53,14 +53,15 @@ describe('Phase 3 preparation jobs', () => {
 
   it('T-02-04 writes UTC timestamps and the same Tokyo date across host timezones', async () => {
     const originalTimezone = process.env.TZ;
-    process.env.TZ = 'UTC';
-    const task = createTask();
-    preparations.enqueue(task, 'tz-job');
-    const result = await preparations.runNext(tasks, new MockAiAdapter());
-    process.env.TZ = 'Asia/Tokyo';
-    expect(result?.createdAt.endsWith('Z')).toBe(true);
-    expect(preparations.listArtifacts(task.id)[0]?.createdAt.endsWith('Z')).toBe(true);
-    process.env.TZ = originalTimezone;
+    try {
+      process.env.TZ = 'UTC';
+      const task = createTask();
+      preparations.enqueue(task, 'tz-job');
+      const result = await preparations.runNext(tasks, new MockAiAdapter());
+      process.env.TZ = 'Asia/Tokyo';
+      expect(result?.createdAt.endsWith('Z')).toBe(true);
+      expect(preparations.listArtifacts(task.id)[0]?.createdAt.endsWith('Z')).toBe(true);
+    } finally { if (originalTimezone === undefined) delete process.env.TZ; else process.env.TZ = originalTimezone; }
   });
 
   it('T-02-05 makes parallel retries with one request key share one job and version', async () => {

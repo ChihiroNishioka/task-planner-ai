@@ -46,13 +46,14 @@ describe('Phase 2 file inputs', () => {
 
   it('T-04-04 preserves ordered input metadata when reopened under another host timezone', () => {
     const previous = process.env.TZ;
-    process.env.TZ = 'UTC';
-    store.addBatch(taskId, [input('AUDIO', audio)], 'timezone');
-    store.close();
-    process.env.TZ = 'Asia/Tokyo';
-    store = new InputStore(join(directory, 'tasks.sqlite'), join(directory, 'blobs'));
-    expect(store.list(taskId)[0]).toMatchObject({ taskId, type: 'AUDIO', mode: 'mock' });
-    process.env.TZ = previous;
+    try {
+      process.env.TZ = 'UTC';
+      store.addBatch(taskId, [input('AUDIO', audio)], 'timezone');
+      store.close();
+      process.env.TZ = 'Asia/Tokyo';
+      store = new InputStore(join(directory, 'tasks.sqlite'), join(directory, 'blobs'));
+      expect(store.list(taskId)[0]).toMatchObject({ taskId, type: 'AUDIO', mode: 'mock' });
+    } finally { if (previous === undefined) delete process.env.TZ; else process.env.TZ = previous; }
   });
 
   it('T-04-05 returns the same saved inputs for concurrent retries with one key', async () => {
