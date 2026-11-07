@@ -19,14 +19,13 @@ npm run dev
 npm test
 npm run lint
 npm run typecheck
-npm run secret-scan
 ```
 
-Docker Compose を使う場合は `docker compose up --build` を実行します。Dockerが無い環境ではnpmから起動できます。
+Docker Compose を使う場合は `docker compose up --build` を実行します。Dockerが無い環境ではnpmから起動できます。SQLiteのファイルは `data/task-planner.sqlite` に保存します。
 
 ## 機能と制約
 
-タスク、ドラフト版、評価、承認状態をアプリ内に保存します。外部操作はモックです。実メール送信、外部削除、共有変更、予定追加は行いません。将来の接続手順とデータ構造は [ARCHITECTURE.md](ARCHITECTURE.md) と [DATA_MODEL.md](DATA_MODEL.md) を参照してください。
+Phase 1ではタスクをSQLiteに保存し、一覧・登録・詳細・編集・完了・延期・論理削除を使えます。外部サービスはモックで、AIドラフト生成、実メール送信、外部削除、共有変更、予定追加は行いません。API認証はまだありません。`npm run start` はlocalhostにだけbindします。Docker Composeは開発用で、公開環境では使わないでください。将来の接続手順とデータ構造は [ARCHITECTURE.md](ARCHITECTURE.md) と [DATA_MODEL.md](DATA_MODEL.md) を参照してください。
 
 ## 開発の段階
 
