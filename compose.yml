@@ -6,6 +6,19 @@ services:
       - "3000:3000"
     environment:
       DATABASE_PATH: /app/data/task-planner.sqlite
+      BLOB_DIRECTORY: /app/data/blobs
+      ARTIFACT_DIRECTORY: /app/data/artifacts
+    volumes:
+      - .:/app
+      - node_modules:/app/node_modules
+      - task_data:/app/data
+  worker:
+    build: .
+    command: timeout 24h npm run worker
+    environment:
+      DATABASE_PATH: /app/data/task-planner.sqlite
+      BLOB_DIRECTORY: /app/data/blobs
+      ARTIFACT_DIRECTORY: /app/data/artifacts
     volumes:
       - .:/app
       - node_modules:/app/node_modules

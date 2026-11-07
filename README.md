@@ -27,7 +27,7 @@ Docker Compose を使う場合は `docker compose up --build` を実行します
 
 ## 機能と制約
 
-Phase 1ではタスクをSQLiteに保存し、一覧・登録・詳細・編集・完了・延期・論理削除を使えます。Phase 2では画像、PDF、音声ファイルをタスクに添付し、ローカル領域へ保存できます。ファイル解析と音声文字起こしは未実装で、画面にモックと表示します。外部サービスはモックで、AIドラフト生成、実メール送信、外部削除、共有変更、予定追加は行いません。API認証はまだありません。`npm run start` はlocalhostにだけbindします。Docker Composeは開発用で、公開環境では使わないでください。将来の接続手順とデータ構造は [ARCHITECTURE.md](ARCHITECTURE.md) と [DATA_MODEL.md](DATA_MODEL.md) を参照してください。
+Phase 1ではタスクをSQLiteに保存し、一覧・登録・詳細・編集・完了・延期・論理削除を使えます。Phase 2では画像、PDF、音声ファイルをタスクに添付し、ローカル領域へ保存できます。ファイル解析と音声文字起こしは未実装で、画面にモックと表示します。Phase 3では「AI準備を依頼」から永続ジョブを登録し、別ターミナルで `timeout 1h npm run worker` を起動すると、決定的なAIモックが作業計画とMarkdown版を保存します。`npm run worker -- --once` は次のジョブを1件だけ処理します。実AI、Drive連携、実サービスへの保存は行いません。API認証はまだありません。`npm run start` はlocalhostにだけbindします。Docker Composeは開発用で、公開環境では使わないでください。将来の接続手順とデータ構造は [ARCHITECTURE.md](ARCHITECTURE.md) と [DATA_MODEL.md](DATA_MODEL.md) を参照してください。
 
 ## 開発の段階
 

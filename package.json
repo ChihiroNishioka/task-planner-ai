@@ -6,6 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start --hostname 127.0.0.1",
+    "worker": "tsx src/worker/index.ts",
     "test": "vitest run",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",

@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { taskInputSchema, taskSchema, type Task } from '../domain/task';
+import { aiStatusSchema, taskInputSchema, taskSchema, type Task } from '../domain/task';
 
 const taskRowSchema = z.object({
   id: z.string().uuid(), title: z.string(), description: z.string(), original_input: z.string(),
@@ -69,6 +69,14 @@ export class TaskStore {
     const now = new Date().toISOString();
     const result = this.db.prepare('UPDATE tasks SET status = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND deleted_at IS NULL')
       .run(status, now, id);
+    return result.changes ? this.get(id) : null;
+  }
+
+  updateAiStatus(id: string, aiStatus: Task['aiStatus']): Task | null {
+    const validatedStatus = aiStatusSchema.parse(aiStatus);
+    const now = new Date().toISOString();
+    const result = this.db.prepare('UPDATE tasks SET ai_status = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND deleted_at IS NULL')
+      .run(validatedStatus, now, id);
     return result.changes ? this.get(id) : null;
   }
 
