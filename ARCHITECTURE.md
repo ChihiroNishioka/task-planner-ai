@@ -9,6 +9,7 @@ flowchart LR
   UI[Web UI] --> API[Next.js API]
   API --> DOMAIN[ドメイン処理]
   DOMAIN --> DB[(SQLite local)]
+  DOMAIN --> BLOBS[(local file volume)]
   WORKER[Node.js worker] --> DB
   DOMAIN --> ADAPTER[サービス別アダプター]
   ADAPTER --> MOCK[永続モック]
@@ -27,4 +28,4 @@ API入口で入力をZod検証します。現在はAPI認証が未実装のた�
 
 ## 運用
 
-`npm run dev` はWebアプリを起動します。Composeはアプリを起動し、SQLiteファイルを名前付きボリュームへ保存します。PostgreSQLとワーカーは未実装です。
+`npm run dev` はWebアプリを起動します。Composeはアプリを起動し、SQLiteファイルと添付blobを名前付きボリュームへ保存します。PostgreSQLとワーカーは未実装です。
