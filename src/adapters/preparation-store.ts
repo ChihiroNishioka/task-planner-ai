@@ -16,6 +16,8 @@ const jobRowSchema = z.object({
 
 export type StoredArtifact = {
   id: string;
+  versionId: string;
+  parentVersionId: string | null;
   taskId: string;
   version: number;
   path: string;
@@ -44,13 +46,20 @@ export class PreparationStore {
       PRIMARY KEY(task_id, revision)
     );
     CREATE TABLE IF NOT EXISTS artifacts (
-      id TEXT PRIMARY KEY, task_id TEXT NOT NULL, current_version INTEGER NOT NULL, created_at TEXT NOT NULL
+      id TEXT PRIMARY KEY, task_id TEXT NOT NULL, current_version INTEGER NOT NULL, created_at TEXT NOT NULL,
+      approved_version_id TEXT
     );
     CREATE TABLE IF NOT EXISTS artifact_versions (
-      id TEXT PRIMARY KEY, artifact_id TEXT NOT NULL, version_number INTEGER NOT NULL, content TEXT NOT NULL,
+      id TEXT PRIMARY KEY, artifact_id TEXT NOT NULL, version_number INTEGER NOT NULL, parent_version_id TEXT, content TEXT NOT NULL,
       file_name TEXT NOT NULL, change_summary TEXT NOT NULL, created_at TEXT NOT NULL, mode TEXT NOT NULL,
       save_status TEXT NOT NULL, plan_json TEXT NOT NULL, UNIQUE(artifact_id, version_number)
+    );
+    CREATE TABLE IF NOT EXISTS feedback (
+      id TEXT PRIMARY KEY, artifact_version_id TEXT NOT NULL, content TEXT NOT NULL,
+      applied_to_version_id TEXT, created_at TEXT NOT NULL
     );`);
+    this.ensureColumn('artifacts', 'approved_version_id', 'TEXT');
+    this.ensureColumn('artifact_versions', 'parent_version_id', 'TEXT');
   }
 
   enqueue(task: Task, operationKey: string = randomUUID()): PreparationJob {
@@ -94,19 +103,54 @@ export class PreparationStore {
 
   listArtifacts(taskId: string): StoredArtifact[] {
     const rows = z.array(z.object({
-      id: z.string().uuid(), artifact_id: z.string().uuid(), version_number: z.number(), content: z.string(),
+      id: z.string().uuid(), artifact_id: z.string().uuid(), version_number: z.number(), parent_version_id: z.string().uuid().nullable(), content: z.string(),
       file_name: z.string(), change_summary: z.string(), created_at: z.string(), mode: z.literal('mock'),
       save_status: z.literal('MOCK_SAVED'), plan_json: z.string(),
     })).parse(this.db.prepare(`SELECT av.* FROM artifact_versions av
       JOIN artifacts a ON a.id = av.artifact_id WHERE a.task_id = ? ORDER BY av.version_number`).all(taskId));
     return rows.map((row) => ({
-      id: row.artifact_id, taskId, version: row.version_number, path: join(this.artifactDirectory, row.file_name),
+      id: row.artifact_id, versionId: row.id, parentVersionId: row.parent_version_id,
+      taskId, version: row.version_number, path: join(this.artifactDirectory, row.file_name),
       mode: row.mode, saveStatus: row.save_status, createdAt: row.created_at,
       plan: workPlanSchema.parse(JSON.parse(row.plan_json)), content: row.content, changeSummary: row.change_summary,
     }));
   }
 
   close(): void { this.db.close(); }
+
+  async revise(taskId: string, rawFeedback: string, tasks: TaskStore, adapter: PreparationAdapter): Promise<StoredArtifact> {
+    const feedback = z.string().trim().min(1).max(20_000).parse(rawFeedback);
+    const task = tasks.get(taskId);
+    const previous = this.listArtifacts(taskId).at(-1);
+    if (!task || !previous) throw new Error('改訂する成果物がありません。');
+    if (!adapter.revise) throw new Error('このAIアダプターは改訂に対応していません。');
+    const generation = generationSchema.parse(await adapter.revise(task, previous.content, feedback));
+    const version = previous.version + 1;
+    const versionId = randomUUID();
+    const fileName = `${previous.id}-v${version}.md`;
+    writeFileSync(join(this.artifactDirectory, fileName), generation.markdown, { flag: 'wx' });
+    const now = new Date().toISOString();
+    this.db.transaction(() => {
+      this.db.prepare('UPDATE artifacts SET current_version = ? WHERE id = ?').run(version, previous.id);
+      this.db.prepare(`INSERT INTO artifact_versions(id, artifact_id, version_number, parent_version_id, content,
+        file_name, change_summary, created_at, mode, save_status, plan_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'mock', 'MOCK_SAVED', ?)`)
+        .run(versionId, previous.id, version, previous.versionId, generation.markdown, fileName,
+          generation.changeSummary, now, JSON.stringify(generation.plan));
+      this.db.prepare('INSERT INTO feedback(id, artifact_version_id, content, applied_to_version_id, created_at) VALUES (?, ?, ?, ?, ?)')
+        .run(randomUUID(), previous.versionId, feedback, versionId, now);
+    }).immediate();
+    tasks.updateAiStatus(taskId, 'READY');
+    return this.listArtifacts(taskId).at(-1) ?? (() => { throw new Error('改訂版を再取得できません。'); })();
+  }
+
+  feedbackHistory(taskId: string): Array<{ sourceVersionId: string; content: string; appliedToVersionId: string | null; createdAt: string }> {
+    const rows = z.array(z.object({
+      artifact_version_id: z.string().uuid(), content: z.string(), applied_to_version_id: z.string().uuid().nullable(), created_at: z.string(),
+    })).parse(this.db.prepare(`SELECT feedback.artifact_version_id, feedback.content, feedback.applied_to_version_id, feedback.created_at
+      FROM feedback JOIN artifact_versions ON artifact_versions.id = feedback.artifact_version_id
+      JOIN artifacts ON artifacts.id = artifact_versions.artifact_id WHERE artifacts.task_id = ? ORDER BY feedback.created_at`).all(taskId));
+    return rows.map((row) => ({ sourceVersionId: row.artifact_version_id, content: row.content, appliedToVersionId: row.applied_to_version_id, createdAt: row.created_at }));
+  }
 
   private save(job: JobRow, task: Task, generation: ReturnType<typeof generationSchema.parse>, tasks: TaskStore): PreparationJob {
     const existing = this.db.prepare('SELECT id, current_version FROM artifacts WHERE task_id = ?').get(task.id);
@@ -119,7 +163,7 @@ export class PreparationStore {
     const transaction = this.db.transaction(() => {
       if (artifactRecord) this.db.prepare('UPDATE artifacts SET current_version = ? WHERE id = ?').run(version, artifactId);
       else this.db.prepare('INSERT INTO artifacts(id, task_id, current_version, created_at) VALUES (?, ?, ?, ?)').run(artifactId, task.id, version, now);
-      this.db.prepare('INSERT INTO artifact_versions(id, artifact_id, version_number, content, file_name, change_summary, created_at, mode, save_status, plan_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      this.db.prepare('INSERT INTO artifact_versions(id, artifact_id, version_number, parent_version_id, content, file_name, change_summary, created_at, mode, save_status, plan_json) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)')
         .run(randomUUID(), artifactId, version, generation.markdown, fileName, generation.changeSummary, now, 'mock', 'MOCK_SAVED', JSON.stringify(generation.plan));
       this.db.prepare('INSERT OR REPLACE INTO work_plans(task_id, revision, plan_json, created_at) VALUES (?, ?, ?, ?)')
         .run(task.id, task.revision + 1, JSON.stringify(generation.plan), now);
@@ -140,6 +184,11 @@ export class PreparationStore {
     const finished = this.getJob(id);
     if (!finished) throw new Error('準備ジョブを再取得できません。');
     return finished;
+  }
+
+  private ensureColumn(table: string, name: string, declaration: string): void {
+    const columns = z.array(z.object({ name: z.string() })).parse(this.db.prepare(`PRAGMA table_info(${table})`).all());
+    if (!columns.some((column) => column.name === name)) this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${declaration}`);
   }
 }
 

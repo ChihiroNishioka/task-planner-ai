@@ -9,6 +9,7 @@ Taskが唯一の管理対象です。以下の技術データはTaskへ紐付き
 | ExecutionJob | id、task_id、job_type、status、scheduled_at、retry_count、idempotency_key、lease_until | 再開可能な非同期実行 |
 | Artifact | id、task_id、current_version_id、approved_version_id | 成果物と現在版・承認版 |
 | ArtifactVersion | id、artifact_id、version_number、parent_version_id、content_snapshot_reference、user_rating、approval_status | 不変のドラフトスナップショット |
+| ArtifactReview | version_id、user_rating、approval_status | 評価と最終承認をタスク完了から分離 |
 | Feedback | id、artifact_version_id、content、applied_to_version_id | 版に紐づく修正指示 |
 | QualityRule | id、content、source_feedback_id、enabled | 明示または反復確認済みの品質ルール |
 | Notification | id、task_id、scheduled_at、status、mode、idempotency_key | 通知予定と配信結果 |
@@ -26,3 +27,5 @@ Task statusはOPEN、IN_PROGRESS、COMPLETED、CANCELLEDです。ai_statusはNOT
 Phase 3ではExecutionJob、WorkPlan、Artifact、ArtifactVersionをSQLiteへ保存します。成果物ファイルはローカルディレクトリへ置き、modeは `mock`、保存状態は `MOCK_SAVED` とします。Google Drive保存とは扱いません。
 
 Phase 4ではTaskScheduleとNotificationをSQLiteへ保存します。期限変更時に以前の予約と未配信通知を取消します。通知箱の状態は `MOCK_DELIVERED` で、実メールを送信しません。
+
+Phase 5では修正指示を前版へ結び付け、改訂版を追加します。Good検索はcategoryが一致する保存済み版だけを返します。品質ルールの自動学習と生成時の自動再利用は未実装です。

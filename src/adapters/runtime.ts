@@ -6,6 +6,7 @@ import { PreparationStore } from './preparation-store';
 import { MockAiAdapter } from './mock-ai';
 import { ScheduleStore } from './scheduling';
 import { MockCalendarAdapter } from './mock-calendar';
+import { ReviewStore } from './review-store';
 
 const databasePath = resolve(process.env.DATABASE_PATH || 'data/task-planner.sqlite');
 mkdirSync(dirname(databasePath), { recursive: true });
@@ -15,6 +16,7 @@ declare global {
   var __inputStore: InputStore | undefined;
   var __preparationStore: PreparationStore | undefined;
   var __scheduleStore: ScheduleStore | undefined;
+  var __reviewStore: ReviewStore | undefined;
 }
 
 export const taskStore = globalThis.__taskStore ??= new TaskStore(databasePath);
@@ -23,3 +25,4 @@ export const preparationStore = globalThis.__preparationStore ??= new Preparatio
 export const mockAiAdapter = new MockAiAdapter();
 export const scheduleStore = globalThis.__scheduleStore ??= new ScheduleStore(databasePath);
 export const mockCalendarAdapter = new MockCalendarAdapter();
+export const reviewStore = globalThis.__reviewStore ??= new ReviewStore(databasePath);

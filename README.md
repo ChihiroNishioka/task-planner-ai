@@ -21,13 +21,13 @@ npm run lint
 npm run typecheck
 ```
 
-`npm test` は現在20件のVitest確認を実行します。
+`npm test` は現在39件のVitest確認を実行します。
 
 Docker Compose を使う場合は `docker compose up --build` を実行します。Dockerが無い環境ではnpmから起動できます。SQLiteのファイルは `data/task-planner.sqlite` に保存します。
 
 ## 機能と制約
 
-Phase 1ではタスクをSQLiteに保存し、一覧・登録・詳細・編集・完了・延期・論理削除を使えます。Phase 2では画像、PDF、音声ファイルをタスクに添付し、ローカル領域へ保存できます。ファイル解析と音声文字起こしは未実装で、画面にモックと表示します。Phase 3では永続ジョブが作業計画とMarkdown成果物を作ります。Phase 4では締切日時から前日通知、準備期限、開始時刻をTokyo時間で計算し、workerがアプリ内通知箱へモック通知を記録します。別ターミナルで `timeout 1h npm run worker` を起動します。`npm run worker -- --once` は期限到来の処理を確認して、ジョブを1件だけ実行します。Calendar参照は空のモックです。実AI、Drive連携、メール通知はありません。API認証はまだありません。`npm run start` はlocalhostにだけbindします。Docker Composeは開発用で、公開環境では使わないでください。将来の接続手順とデータ構造は [ARCHITECTURE.md](ARCHITECTURE.md) と [DATA_MODEL.md](DATA_MODEL.md) を参照してください。
+Phase 1ではタスクをSQLiteに保存し、一覧・登録・詳細・編集・完了・延期・論理削除を使えます。Phase 2では画像、PDF、音声ファイルをタスクに添付し、ローカル領域へ保存できます。ファイル解析と音声文字起こしは未実装で、画面にモックと表示します。Phase 3では永続ジョブが作業計画とMarkdown成果物を作ります。Phase 4では締切日時から前日通知、準備期限、開始時刻をTokyo時間で計算し、workerがアプリ内通知箱へモック通知を記録します。Phase 5では版を保持して修正し、版ごとの評価、最終版承認、タスク完了を別々に操作します。Good成果物は同じカテゴリ内で検索できますが、生成文へ自動適用する品質メモリは未実装です。別ターミナルで `timeout 1h npm run worker` を起動します。`npm run worker -- --once` は期限到来の処理を確認して、ジョブを1件だけ実行します。Calendar参照は空のモックです。実AI、Drive連携、メール通知はありません。API認証はまだありません。`npm run start` はlocalhostにだけbindします。Docker Composeは開発用で、公開環境では使わないでください。将来の接続手順とデータ構造は [ARCHITECTURE.md](ARCHITECTURE.md) と [DATA_MODEL.md](DATA_MODEL.md) を参照してください。
 
 ## 開発の段階
 
