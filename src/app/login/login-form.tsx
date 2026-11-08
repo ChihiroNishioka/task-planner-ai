@@ -86,6 +86,8 @@ function firebaseErrorMessage(cause: unknown): string {
     if (cause.code === 'auth/popup-closed-by-user') return 'ログイン用のポップアップが閉じられました。';
     if (cause.code === 'auth/popup-blocked') return 'ポップアップがブロックされました。ブラウザーの設定を確認してください。';
     if (cause.code === 'auth/network-request-failed') return '通信エラーが発生しました。もう一度お試しください。';
+    if (cause.code === 'auth/unauthorized-domain') return 'このURLはログインを許可されていません（管理者向け：Firebase の承認済みドメインを確認）。';
+    if (cause.code.startsWith('auth/')) return `Googleログインに失敗しました。もう一度お試しください（${cause.code}）。`;
   }
   return cause instanceof Error ? cause.message : '通信エラーが発生しました。もう一度お試しください。';
 }
