@@ -77,7 +77,7 @@ for (const viewport of viewports) {
       runWorker({ AI_MODE: 'cli', AI_CLI: 'claude', AI_CLI_PATH: join(process.cwd(), 'tests', 'fixtures', 'fake-ai-cli.mjs'), AI_TIMEOUT_MS: '10000' });
       const result = page.getByRole('region', { name: 'AIの準備結果' });
       await expect(result.locator('.mode-badge')).toHaveText('AI生成', { timeout: 15_000 });
-      await expect(result.locator('.ai-steps li')).toHaveCount(4);
+      await expect(page.getByRole('region', { name: '分解編集' }).locator('.ai-steps li')).toHaveCount(4);
       await expect(result.locator('.ai-draft')).toContainText('構成案');
       await expectNoHorizontalOverflow(page, viewport.width);
       await result.scrollIntoViewIfNeeded();

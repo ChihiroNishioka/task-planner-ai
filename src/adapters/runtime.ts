@@ -1,5 +1,6 @@
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import { BreakdownStore } from './breakdown-store';
 import { TaskStore } from './task-store';
 import { InputStore } from './input-store';
 import { PreparationStore } from './preparation-store';
@@ -15,6 +16,7 @@ const databasePath = resolve(process.env.DATABASE_PATH || 'data/task-planner.sql
 mkdirSync(dirname(databasePath), { recursive: true });
 
 declare global {
+  var __breakdownStore: BreakdownStore | undefined;
   var __taskStore: TaskStore | undefined;
   var __inputStore: InputStore | undefined;
   var __preparationStore: PreparationStore | undefined;
@@ -36,3 +38,5 @@ export const scheduleStore = globalThis.__scheduleStore ??= new ScheduleStore(da
 export const mockCalendarAdapter = new MockCalendarAdapter();
 export const reviewStore = globalThis.__reviewStore ??= new ReviewStore(databasePath);
 export const workerStatusStore = globalThis.__workerStatusStore ??= new WorkerStatusStore(databasePath);
+
+export const breakdownStore = globalThis.__breakdownStore ??= new BreakdownStore(databasePath);
