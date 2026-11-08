@@ -1,9 +1,15 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
+import { buildWorkerEnv, unsafeWebAiEnv } from './helpers/safe-ai-env';
 
-const screenshots = join(process.cwd(), 'docs', 'screenshots');
+const screenshots = process.env.SHOT_DIR ?? join(process.cwd(), 'docs', 'screenshots');
+const webAi = process.env.E2E_WEB_AI === '1';
+// HTTP操作や子worker起動の前に、親環境が実CLIを呼び得るならここで失敗させる（Webサーバーは親環境を継承するため）。
+const unsafeReason = unsafeWebAiEnv(process.env, process.cwd());
+if (unsafeReason) throw new Error(unsafeReason);
+const fakeCli = join(process.cwd(), 'tests', 'fixtures', 'fake-ai-cli.mjs');
 mkdirSync(screenshots, { recursive: true });
 const viewports = [
   { name: 'iphone-390x844', width: 390, height: 844 },
@@ -18,7 +24,11 @@ for (const viewport of viewports) {
       const task = await createTask(request, `list-${viewport.name}`);
       await page.goto('/');
       await expect(page.getByRole('link', { name: task.title })).toBeVisible();
-      await expect(page.getByText('外部サービスはすべてモックです')).toBeVisible();
+      await expect(page.locator('.mock-banner')).toContainText('モック');
+      const card = page.locator('.task-card', { hasText: task.title });
+      await expect(card.locator('.badges')).toContainText('未着手');
+      await expect(card.locator('.badges')).toContainText('AI 準備なし');
+      await expect(page.locator('main')).not.toContainText(/\b(OPEN|NOT_REQUIRED|READY|IN_PROGRESS|WAITING_CONFIRMATION)\b/);
       await expectNoHorizontalOverflow(page, viewport.width);
       await capture(page, `${viewport.name}-list.png`);
     });
@@ -28,27 +38,30 @@ for (const viewport of viewports) {
       await page.goto(`/tasks/${task.id}`);
       await expect(page.getByRole('heading', { name: task.title })).toBeVisible();
       await expect(page.getByText('解析はモックのため行いません。')).toBeVisible();
+      await expect(page.locator('.detail-card')).toContainText('未着手 / AI 準備なし');
+      await expect(page.locator('.detail-card')).toContainText('仕事 / 一般');
+      await expect(page.locator('main')).not.toContainText(/\b(OPEN|NOT_REQUIRED|GENERAL|WORK)\b/);
       await expectNoHorizontalOverflow(page, viewport.width);
       await capture(page, `${viewport.name}-detail.png`);
+      await page.goto('/settings');
+      await expect(page.getByRole('heading', { name: '設定' })).toBeVisible();
+      await expect(page.locator('.service-list')).toContainText('AI');
+      await expectNoHorizontalOverflow(page, viewport.width);
+      await capture(page, `${viewport.name}-settings.png`);
     });
 
     test('draft comparison', async ({ page, request }) => {
       const task = await createTask(request, `review-${viewport.name}`);
       const preparation = await request.post(`/api/tasks/${task.id}/prepare`, { headers: { 'idempotency-key': `prepare-${viewport.name}` } });
       expect(preparation.status()).toBe(202);
-      execFileSync(process.execPath, ['node_modules/tsx/dist/cli.mjs', 'src/worker/index.ts', '--once'], {
-        cwd: process.cwd(), timeout: 30_000, env: {
-          ...process.env,
-          DATABASE_PATH: join(process.cwd(), 'data', 'playwright.sqlite'),
-          BLOB_DIRECTORY: join(process.cwd(), 'data', 'playwright-blobs'),
-          ARTIFACT_DIRECTORY: join(process.cwd(), 'data', 'playwright-artifacts'),
-        },
-      });
+      runWorker({});
       await request.post(`/api/tasks/${task.id}/feedback`, { data: { content: '結論を先に書いてください' } });
       await page.goto(`/tasks/${task.id}/review`);
       await expect(page.getByRole('heading', { name: '成果物レビュー' })).toBeVisible();
       await expect(page.getByRole('heading', { name: 'v1' })).toBeVisible();
       await expect(page.getByRole('heading', { name: 'v2' })).toBeVisible();
+      await expect(page.locator('.detail-card')).toContainText('評価 未評価・最終版 未承認');
+      await expect(page.locator('main')).not.toContainText(/\b(UNRATED|UNAPPROVED|MOCK_SAVED)\b/);
       await expectNoHorizontalOverflow(page, viewport.width);
       await capture(page, `${viewport.name}-draft-comparison.png`);
     });
@@ -99,6 +112,101 @@ for (const viewport of viewports) {
       await expect(page.getByRole('region', { name: 'AIの準備結果' }).locator('.mode-badge')).toHaveText('AI生成');
     });
 
+    test('worker mode shown by the UI is the worker mode, not the web env', async ({ page }) => {
+      const status = async (expected: string, bannerText: string, state: string) => {
+        await expect.poll(async () => {
+          const ai = (await (await page.request.get('/api/services')).json() as { services: Array<{ name: string; label: string; worker?: { state: string } }> }).services.find((service) => service.name === 'AI');
+          return ai?.worker?.state === state ? ai.label : '';
+        }, { timeout: 20_000 }).toContain(expected);
+        await page.goto('/');
+        await expect(page.locator('.mock-banner')).toContainText(bannerText);
+        await expectNoHorizontalOverflow(page, viewport.width);
+      };
+      const mockWorker = startWorker({ AI_MODE: 'mock' });
+      try {
+        await status('モック', 'モックです', 'running');
+        await page.goto('/settings');
+        await expect(page.locator('.service-list li').filter({ has: page.getByText('AI', { exact: true }) })).toContainText('モック');
+        await expect(page.locator('.service-list li').filter({ has: page.getByText('AI', { exact: true }) })).not.toContainText('サブスクCLI');
+      } finally { await stopWorker(mockWorker); }
+      const cliWorker = startWorker({ AI_MODE: 'cli', AI_CLI_PATH: fakeCli });
+      try {
+        await status('サブスクCLI', 'AIはサブスクCLIで生成します', 'running');
+        await page.goto('/settings');
+        await expect(page.locator('.service-list li').filter({ has: page.getByText('AI', { exact: true }) })).toContainText('サブスクCLI');
+        await capture(page, `${viewport.name}-settings-worker-cli.png`);
+      } finally { await stopWorker(cliWorker); }
+      await status('停止中', '停止', 'stopped');
+    });
+
+    test('revision from feedback uses the AI and shows the AI label', async ({ page, request }) => {
+      test.skip(!webAi, 'Web側にAI_MODE=cli（偽CLI）を設定した実行でのみ検証する');
+      const task = await createTask(request, `revise-ai-${viewport.name}`);
+      await request.post(`/api/tasks/${task.id}/prepare`, { headers: { 'idempotency-key': `revise-ai-${viewport.name}` } });
+      runWorker({ AI_MODE: 'cli', AI_CLI_PATH: fakeCli, AI_TIMEOUT_MS: '10000' });
+      await page.goto(`/tasks/${task.id}/review`);
+      await expect(page.getByRole('heading', { name: 'v1' })).toBeVisible();
+      await expect(page.locator('.revision-notice')).toContainText('初版はワーカーの設定');
+      await expect(page.locator('.revision-notice')).toContainText('修正版はWeb側の設定でAI');
+      await page.getByLabel('修正指示').fill('結論を先に書いてください');
+      const feedbackResponse = page.waitForResponse((response) => response.url().endsWith(`/api/tasks/${task.id}/feedback`) && response.request().method() === 'POST');
+      await page.getByRole('button', { name: '修正版を作る' }).click();
+      await expect(page.getByRole('button', { name: /改訂版を作成中/ })).toBeVisible();
+      const feedbackBody = await (await feedbackResponse).json() as { label: string; artifact: { modeLabel: string } };
+      expect(feedbackBody.label).toBe(feedbackBody.artifact.modeLabel);
+      expect(feedbackBody.label).toBe('AI生成');
+      await expect(page.getByRole('heading', { name: 'v2' })).toBeVisible({ timeout: 20_000 });
+      const v2 = page.locator('.version-card', { has: page.getByRole('heading', { name: 'v2' }) });
+      await expect(v2.locator('.mode-badge')).toHaveText('AI生成');
+      await expect(v2).toContainText('偽CLIの改訂版');
+      await expect(page.getByRole('status').filter({ hasText: 'AI生成' })).toBeVisible();
+      await expectNoHorizontalOverflow(page, viewport.width);
+      await v2.scrollIntoViewIfNeeded();
+      await capture(page, `${viewport.name}-revise-ai.png`);
+    });
+
+    test('revision falls back to the mock and shows the reason', async ({ page, request }) => {
+      test.skip(!webAi, 'Web側にAI_MODE=cli（偽CLI）を設定した実行でのみ検証する');
+      const task = await createTask(request, `revise-fb-${viewport.name}`);
+      await request.post(`/api/tasks/${task.id}/prepare`, { headers: { 'idempotency-key': `revise-fb-${viewport.name}` } });
+      runWorker({ AI_MODE: 'cli', AI_CLI_PATH: fakeCli, AI_TIMEOUT_MS: '10000' });
+      await page.goto(`/tasks/${task.id}/review`);
+      await page.getByLabel('修正指示').fill('FAKE_CLI_EXIT_1 失敗させる');
+      await page.getByRole('button', { name: '修正版を作る' }).click();
+      const v2 = page.locator('.version-card', { has: page.getByRole('heading', { name: 'v2' }) });
+      await expect(v2.locator('.mode-badge')).toContainText('モック（AI失敗: AIのCLIがエラーで終了しました）', { timeout: 20_000 });
+      await expect(v2).toContainText('モック改訂');
+      await expectNoHorizontalOverflow(page, viewport.width);
+      await v2.scrollIntoViewIfNeeded();
+      await capture(page, `${viewport.name}-revise-fallback.png`);
+      await page.goto(`/tasks/${task.id}`);
+      await expect(page.locator('.fallback-note')).toContainText('修正指示をもう一度送');
+      await expect(page.locator('.fallback-note')).not.toContainText('「AIでもう一度作る」を押して');
+    });
+
+    test('services API failure shows a Japanese error with retry on the list', async ({ page }) => {
+      let fail = true;
+      await page.route('**/api/services', (route) => fail
+        ? route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'unavailable' }) })
+        : route.continue());
+      await page.goto('/');
+      await expect(page.locator('.mock-banner')).toContainText('サービスの状態を取得できませんでした');
+      await expect(page.locator('.mock-banner')).not.toContainText('確認中');
+      fail = false;
+      await page.getByRole('button', { name: '状態を再取得' }).click();
+      await expect(page.locator('.mock-banner')).not.toContainText('サービスの状態を取得できませんでした');
+    });
+
+    test('open list and settings pages follow the worker heartbeat by polling', async ({ page }) => {
+      const worker = startWorker({ AI_MODE: 'cli', AI_CLI_PATH: fakeCli });
+      try {
+        await page.goto('/');
+        await expect(page.locator('.mock-banner')).toContainText('AIはサブスクCLIで生成します', { timeout: 20_000 });
+      } finally { await stopWorker(worker); }
+      await expect(page.locator('.mock-banner')).toContainText('停止', { timeout: 20_000 });
+      await expect(page.locator('.mock-banner')).not.toContainText('AIはサブスクCLIで生成します');
+    });
+
     test('loading state', async ({ page }) => {
       await page.route('**/api/tasks', async (route) => {
         await new Promise((resolve) => setTimeout(resolve, 2500));
@@ -126,15 +234,30 @@ for (const viewport of viewports) {
   });
 }
 
+function workerEnv(extraEnv: Record<string, string>): NodeJS.ProcessEnv {
+  const env = buildWorkerEnv(process.env, extraEnv, process.cwd());
+  env.DATABASE_PATH = process.env.DATABASE_PATH ?? join(process.cwd(), 'data', 'playwright.sqlite');
+  env.BLOB_DIRECTORY = process.env.BLOB_DIRECTORY ?? join(process.cwd(), 'data', 'playwright-blobs');
+  env.ARTIFACT_DIRECTORY = process.env.ARTIFACT_DIRECTORY ?? join(process.cwd(), 'data', 'playwright-artifacts');
+  return env as NodeJS.ProcessEnv;
+}
+
 function runWorker(extraEnv: Record<string, string>) {
-  execFileSync(process.execPath, ['node_modules/tsx/dist/cli.mjs', 'src/worker/index.ts', '--once'], {
-    cwd: process.cwd(), timeout: 30_000, env: {
-      ...process.env, ...extraEnv,
-      DATABASE_PATH: join(process.cwd(), 'data', 'playwright.sqlite'),
-      BLOB_DIRECTORY: join(process.cwd(), 'data', 'playwright-blobs'),
-      ARTIFACT_DIRECTORY: join(process.cwd(), 'data', 'playwright-artifacts'),
-    },
-  });
+  execFileSync(process.execPath, ['node_modules/tsx/dist/cli.mjs', 'src/worker/index.ts', '--once'], { cwd: process.cwd(), timeout: 30_000, env: workerEnv(extraEnv) });
+}
+
+/** 常駐ワーカーを起動する。このテストが起動したPIDだけを停止する。 */
+function startWorker(extraEnv: Record<string, string>) {
+  return spawn(process.execPath, ['node_modules/tsx/dist/cli.mjs', 'src/worker/index.ts'], { cwd: process.cwd(), env: workerEnv(extraEnv), stdio: 'ignore' });
+}
+
+async function stopWorker(child: ReturnType<typeof startWorker>) {
+  if (child.exitCode !== null) return;
+  const exited = new Promise((resolve) => child.once('exit', resolve));
+  child.kill('SIGTERM');
+  const timer = setTimeout(() => child.kill('SIGKILL'), 8_000);
+  await exited;
+  clearTimeout(timer);
 }
 
 async function createTask(request: APIRequestContext, key: string) {

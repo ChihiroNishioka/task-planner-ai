@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import Database from 'better-sqlite3';
@@ -127,23 +127,41 @@ export class PreparationStore {
     const task = tasks.get(taskId);
     const previous = this.listArtifacts(taskId).at(-1);
     if (!task || !previous) throw new Error('改訂する成果物がありません。');
+    if (task.status === 'COMPLETED' || task.status === 'CANCELLED') throw new Error('完了または中止したタスクは改訂できません。');
     if (!adapter.revise) throw new Error('このAIアダプターは改訂に対応していません。');
     const generation = generationSchema.parse(await adapter.revise(task, previous.content, feedback));
     const version = previous.version + 1;
     const versionId = randomUUID();
     const fileName = `${previous.id}-v${version}.md`;
-    writeFileSync(join(this.artifactDirectory, fileName), generation.markdown, { flag: 'wx' });
+    const filePath = join(this.artifactDirectory, fileName);
     const now = new Date().toISOString();
-    this.db.transaction(() => {
-      this.db.prepare('UPDATE artifacts SET current_version = ? WHERE id = ?').run(version, previous.id);
-      this.db.prepare(`INSERT INTO artifact_versions(id, artifact_id, version_number, parent_version_id, content,
-        file_name, change_summary, created_at, mode, save_status, plan_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'mock', 'MOCK_SAVED', ?)`)
-        .run(versionId, previous.id, version, previous.versionId, generation.markdown, fileName,
-          generation.changeSummary, now, JSON.stringify(generation.plan));
-      this.db.prepare('INSERT INTO feedback(id, artifact_version_id, content, applied_to_version_id, created_at) VALUES (?, ?, ?, ?, ?)')
-        .run(randomUUID(), previous.versionId, feedback, versionId, now);
-    }).immediate();
-    tasks.updateAiStatus(taskId, 'READY');
+    let written = false;
+    try {
+      // 生成待ちの間にタスクや版が変わっていないかを、書き込みロックを持ったまま検証してから保存する。
+      this.db.transaction(() => {
+        const current = z.object({ status: z.string(), revision: z.number(), deleted_at: z.string().nullable() }).nullable()
+          .parse(this.db.prepare('SELECT status, revision, deleted_at FROM tasks WHERE id = ?').get(taskId) ?? null);
+        if (!current || current.deleted_at) throw new Error('改訂中にタスクが削除されたため、修正版を保存しませんでした。');
+        if (current.status === 'COMPLETED' || current.status === 'CANCELLED') throw new Error('改訂中にタスクが完了または中止されたため、修正版を保存しませんでした。');
+        if (current.revision !== task.revision) throw new Error('改訂中にタスクが変更されたため、修正版を保存しませんでした。もう一度お試しください。');
+        const latest = z.object({ id: z.string(), version_number: z.number() }).nullable().parse(this.db.prepare(
+          'SELECT id, version_number FROM artifact_versions WHERE artifact_id = ? ORDER BY version_number DESC LIMIT 1').get(previous.id) ?? null);
+        if (!latest || latest.id !== previous.versionId || latest.version_number !== previous.version) throw new Error('改訂中に別の版が作成されたため、修正版を保存しませんでした。最新の版を確認してください。');
+        writeFileSync(filePath, generation.markdown, { flag: 'wx' });
+        written = true;
+        this.db.prepare('UPDATE artifacts SET current_version = ? WHERE id = ?').run(version, previous.id);
+        this.db.prepare(`INSERT INTO artifact_versions(id, artifact_id, version_number, parent_version_id, content,
+          file_name, change_summary, created_at, mode, fallback_reason, save_status, plan_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'MOCK_SAVED', ?)`)
+          .run(versionId, previous.id, version, previous.versionId, generation.markdown, fileName,
+            generation.changeSummary, now, generation.meta?.mode ?? 'mock', generation.meta?.fallbackReason ?? null, JSON.stringify(generation.plan));
+        this.db.prepare('INSERT INTO feedback(id, artifact_version_id, content, applied_to_version_id, created_at) VALUES (?, ?, ?, ?, ?)')
+          .run(randomUUID(), previous.versionId, feedback, versionId, now);
+        this.db.prepare("UPDATE tasks SET ai_status = 'READY', revision = revision + 1, updated_at = ? WHERE id = ? AND deleted_at IS NULL").run(now, taskId);
+      }).immediate();
+    } catch (error) {
+      if (written) rmSync(filePath, { force: true });
+      throw error;
+    }
     return this.listArtifacts(taskId).at(-1) ?? (() => { throw new Error('改訂版を再取得できません。'); })();
   }
 

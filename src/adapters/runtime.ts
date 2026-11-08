@@ -9,6 +9,7 @@ import { CliAiAdapter, createCliRunnerFromEnv, FallbackAiAdapter } from './cli-a
 import { ScheduleStore } from './scheduling';
 import { MockCalendarAdapter } from './mock-calendar';
 import { ReviewStore } from './review-store';
+import { WorkerStatusStore } from './worker-status';
 
 const databasePath = resolve(process.env.DATABASE_PATH || 'data/task-planner.sqlite');
 mkdirSync(dirname(databasePath), { recursive: true });
@@ -19,6 +20,7 @@ declare global {
   var __preparationStore: PreparationStore | undefined;
   var __scheduleStore: ScheduleStore | undefined;
   var __reviewStore: ReviewStore | undefined;
+  var __workerStatusStore: WorkerStatusStore | undefined;
 }
 
 export const taskStore = globalThis.__taskStore ??= new TaskStore(databasePath);
@@ -33,3 +35,4 @@ export const preparationAdapter: PreparationAdapter = aiMode === 'cli'
 export const scheduleStore = globalThis.__scheduleStore ??= new ScheduleStore(databasePath);
 export const mockCalendarAdapter = new MockCalendarAdapter();
 export const reviewStore = globalThis.__reviewStore ??= new ReviewStore(databasePath);
+export const workerStatusStore = globalThis.__workerStatusStore ??= new WorkerStatusStore(databasePath);

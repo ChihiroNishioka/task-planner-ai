@@ -3,6 +3,8 @@
 import Link from 'next/link';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { taskListResponseSchema } from '../domain/task';
+import { useServices } from './use-services';
+import { aiStatusLabel, statusLabel, userMessage } from '../domain/labels';
 
 type Task = {
   id: string;
@@ -14,6 +16,14 @@ type Task = {
   category: string;
 };
 
+function bannerText(ai: { mode: string; label: string } | null, error: string): string {
+  if (error) return `${error}AIの実行モードを確認できません。AI以外の連携はモックです`;
+  if (!ai) return 'AIの実行モードを確認中…';
+  if (ai.mode === 'cli') return 'AIはサブスクCLIで生成します（失敗時はモック）。AI以外の連携はモックです';
+  if (ai.mode === 'mock') return 'AIもAI以外の連携もモックです';
+  return `${ai.label}。AI以外の連携はモックです`;
+}
+
 const filters = ['すべて', '今日', '明日以降', '期限超過', 'AI準備完了', 'AI実行中', '完了'] satisfies readonly string[];
 
 export default function Home() {
@@ -24,18 +34,8 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [aiReal, setAiReal] = useState(false);
-  useEffect(() => {
-    let active = true;
-    void fetch('/api/services').then(async (response) => {
-      if (!response.ok) return;
-      const body: unknown = await response.json();
-      const services = typeof body === 'object' && body !== null && 'services' in body && Array.isArray(body.services) ? body.services as unknown[] : [];
-      const real = services.some((service) => typeof service === 'object' && service !== null && 'name' in service && 'mode' in service && service.name === 'AI' && service.mode === 'cli');
-      if (active) setAiReal(real);
-    }).catch(() => undefined);
-    return () => { active = false; };
-  }, []);
+  const { services, error: servicesError, reload: reloadServices } = useServices();
+  const ai = services?.find((service) => service.name === 'AI') ?? null;
 
   async function loadTasks() {
     setLoading(true);
@@ -46,7 +46,7 @@ export default function Home() {
       const data = taskListResponseSchema.parse(await response.json());
       setTasks(data.tasks);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'タスクを読み込めませんでした。');
+      setError(userMessage(cause, 'タスクを読み込めませんでした。'));
     } finally {
       setLoading(false);
     }
@@ -58,7 +58,7 @@ export default function Home() {
       if (!response.ok) throw new Error('タスクを読み込めませんでした。');
       return taskListResponseSchema.parse(await response.json());
     }).then((data) => { if (active) setTasks(data.tasks); }).catch((cause: unknown) => {
-      if (active) setError(cause instanceof Error ? cause.message : 'タスクを読み込めませんでした。');
+      if (active) setError(userMessage(cause, 'タスクを読み込めませんでした。'));
     }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, []);
@@ -78,7 +78,7 @@ export default function Home() {
       setDeadline('');
       await loadTasks();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'タスクを登録できませんでした。');
+      setError(userMessage(cause, 'タスクを登録できませんでした。'));
     } finally {
       setBusy(false);
     }
@@ -103,7 +103,7 @@ export default function Home() {
 
   return <main className="shell">
     <header className="topbar"><div><p className="eyebrow">TASK PLANNER AI</p><h1>タスク</h1></div><Link className="secondary-button" href="/settings">設定</Link></header>
-    <p className="mock-banner" role="status">{aiReal ? 'AIはサブスクCLIで生成します（失敗時はモック）。ほかの外部サービスはモックです' : '外部サービスはすべてモックです'}</p>
+    <p className="mock-banner" role="status">{bannerText(ai, servicesError)}{servicesError ? <button type="button" className="secondary-button" onClick={reloadServices}>状態を再取得</button> : null}</p>
     <form className="task-form" onSubmit={createTask}>
       <label htmlFor="task-title">新しいタスク</label>
       <textarea id="task-title" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="やることを入力" rows={2} />
@@ -117,9 +117,3 @@ export default function Home() {
     </article>)}</section>}
   </main>;
 }
-
-const statusLabels: Record<string, string> = { OPEN: '未着手', IN_PROGRESS: '進行中', COMPLETED: '完了', CANCELLED: '中止' };
-const aiStatusLabels: Record<string, string> = { NOT_REQUIRED: '準備なし', WAITING_CONFIRMATION: '確認待ち', QUEUED: '待機中', RUNNING: '実行中', READY: '準備完了', FAILED: '失敗', CANCELLED: '中止' };
-
-function statusLabel(status: string): string { return statusLabels[status] ?? status; }
-function aiStatusLabel(status: string): string { return aiStatusLabels[status] ?? status; }
