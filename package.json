@@ -15,19 +15,21 @@
   },
   "dependencies": {
     "better-sqlite3": "^12.4.1",
+    "firebase": "^13.2.0",
+    "jose": "^6.2.15",
     "next": "^16.4.5",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@playwright/test": "^1.65.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^24.10.0",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
     "eslint": "^9.39.1",
     "eslint-config-next": "^16.4.5",
-    "@playwright/test": "^1.65.0",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3",
     "vitest": "^4.0.8"

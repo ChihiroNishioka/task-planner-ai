@@ -62,3 +62,15 @@ Phase 1から5では、SQLiteのタスク管理、添付ファイルのローカ
 ## 開発段階
 
 Phase 0は設計と環境、Phase 1はタスク管理、Phase 2は入力、Phase 3は準備とドラフト、Phase 4は期限と通知、Phase 5はレビューと再利用、Phase 6は統合検証を扱います。実装と検証の記録は `/workspace/dev/task-planner-ai/.runs/` にあります。
+## Googleログイン
+
+ログインには Firebase Authentication の Google プロバイダーを使います。次の環境変数を設定してください。
+
+- `AUTH_MODE` は通常未設定のままにします。未設定時は Firebase 認証を使います。
+- `ALLOWED_EMAILS` は利用を許可するメールアドレスをカンマ区切りで指定します。空の場合は全員拒否します。
+- `SESSION_SECRET` は `openssl rand -base64 48` で生成します。32文字以上が必要です。
+- `FIREBASE_API_KEY`、`FIREBASE_AUTH_DOMAIN`、`FIREBASE_PROJECT_ID` は Firebase コンソールの Web アプリ設定から読み込みます。
+
+Firebase コンソールの Authentication 設定で Google プロバイダーを有効にし、公開ホスト名を承認済みドメインへ追加してください。設定値は実行時環境に置き、リポジトリへ登録しないでください。
+
+`AUTH_MODE=test` はローカルのテスト専用です。テスト用メール入力欄を表示し、Google へ接続しません。本番環境ではこのモードを拒否します。
