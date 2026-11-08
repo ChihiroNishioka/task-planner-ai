@@ -62,3 +62,39 @@ Phase 1から5では、SQLiteのタスク管理、添付ファイルのローカ
 ## 開発段階
 
 Phase 0は設計と環境、Phase 1はタスク管理、Phase 2は入力、Phase 3は準備とドラフト、Phase 4は期限と通知、Phase 5はレビューと再利用、Phase 6は統合検証を扱います。実装と検証の記録は `/workspace/dev/task-planner-ai/.runs/` にあります。
+
+## Googleログイン
+
+ログインには Firebase Authentication の Google プロバイダーを使います。次の環境変数を設定してください。
+
+- `AUTH_MODE` は通常未設定のままにします。未設定時は Firebase 認証を使います。
+- `ALLOWED_EMAILS` は利用を許可するメールアドレスをカンマ区切りで指定します。空の場合は全員拒否します。
+- `SESSION_SECRET` は `openssl rand -base64 48` で生成します。32文字以上が必要です。
+- `FIREBASE_API_KEY`、`FIREBASE_AUTH_DOMAIN`、`FIREBASE_PROJECT_ID` は Firebase コンソールの Web アプリ設定から読み込みます。
+
+Firebase コンソールの Authentication 設定で Google プロバイダーを有効にし、公開ホスト名を承認済みドメインへ追加してください。設定値は実行時環境に置き、リポジトリへ登録しないでください。
+
+`AUTH_MODE=test` はローカルのテスト専用です。テスト用メール入力欄を表示し、Google へ接続しません。本番環境ではこのモードを拒否します。
+
+### box での起動（Tailscale Funnel 配下）
+
+```sh
+export DATABASE_PATH=/path/to/data/app.sqlite BLOB_DIRECTORY=/path/to/data/blobs ARTIFACT_DIRECTORY=/path/to/data/artifacts
+export ALLOWED_EMAILS=... SESSION_SECRET=... FIREBASE_API_KEY=... FIREBASE_AUTH_DOMAIN=... FIREBASE_PROJECT_ID=...
+timeout 10m npm run build
+npm start -- --port 3310     # Web（127.0.0.1 で待ち受け。Funnel の / をこのポートへ向ける）
+npm run worker               # ワーカー（認証の影響なし。DATABASE_PATH などは Web と同じ値）
+```
+
+- Firebase の Web 設定（3つ）は、同じ Firebase プロジェクトを使う駄洒落保管庫の Web 設定と同じ値です。ブラウザーに載る公開値ですが、リポジトリには書かず環境変数で渡します。
+- 公開ホストは Firebase コンソール →（プロジェクト）→ Authentication → 設定 → 承認済みドメイン に追加しておきます。
+- Web は `NODE_ENV=production`（`npm start`）で動かすので、Cookie には Secure が付きます。`AUTH_MODE=test` は本番では拒否されます。
+- 環境変数を変えたら Web を再起動します（Firebase 設定は実行時に読むので、再ビルドは不要です）。
+
+### 最初の実ログイン確認
+
+1. 公開 URL を開くと `/login` に移り、「Googleでログイン」ボタンが出ることを確かめます。
+2. ボタンを押し、許可したGoogleアカウントでログインします。トップに戻り、右上に「ログイン中：（メール）」と「ログアウト」が出れば成功です。
+3. 許可していない Google アカウントで試すと「このGoogleアカウントでは使えません。」と出て入れないことを確かめます。
+4. 「ログアウト」を押すと `/login` に戻り、`/api/tasks` が 401 になることを確かめます。
+5. 「ログインの設定が足りません」と出たら、FIREBASE_* / SESSION_SECRET / ALLOWED_EMAILS のどれかが未設定です。`auth/unauthorized-domain` 相当のエラーなら、承認済みドメインの追加を確認します。
