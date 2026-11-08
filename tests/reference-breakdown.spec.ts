@@ -4,7 +4,7 @@ import { expect, test } from '@playwright/test';
 import { z } from 'zod';
 import { breakdownSnapshotSchema } from '../src/domain/breakdown';
 
-const shots = process.env.SHOT_DIR ?? '/workspace/dev/tp-ref-runs/integration-shots';
+const shots = process.env.SHOT_DIR ?? 'test-results/reference-breakdown-shots';
 mkdirSync(shots, { recursive: true });
 
 for (const width of [390, 1280]) {

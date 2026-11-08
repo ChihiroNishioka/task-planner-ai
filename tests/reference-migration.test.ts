@@ -1,4 +1,5 @@
 import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import { expect, it } from 'vitest';
@@ -17,7 +18,7 @@ function snapshot(db: Database.Database) {
 }
 
 it('MIG-02 初回追加前の既存スキーマ全体と保存データを維持する', async () => {
-  const directory = mkdtempSync('/workspace/dev/tp-ref-data/reference-migration-');
+  const directory = mkdtempSync(join(tmpdir(), 'reference-migration-'));
   const path = join(directory, 'db.sqlite');
   const tasks = new TaskStore(path);
   const preparations = new PreparationStore(path, join(directory, 'artifacts'));

@@ -1,4 +1,5 @@
 import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { randomBytes } from 'node:crypto';
@@ -31,7 +32,7 @@ let preparations: PreparationStore;
 let reviews: ReviewStore;
 let prompts: string[];
 beforeEach(() => {
-  directory = mkdtempSync('/workspace/dev/tp-ref-data/reference-integration-');
+  directory = mkdtempSync(join(tmpdir(), 'reference-integration-'));
   const path = join(directory, 'db.sqlite');
   tasks = new TaskStore(path);
   references = new ReferenceStore(path);

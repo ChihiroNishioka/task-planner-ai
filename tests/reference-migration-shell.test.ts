@@ -1,6 +1,7 @@
 import { fork, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import { expect, it } from 'vitest';
@@ -21,7 +22,7 @@ function message(child: ChildProcess, expected: string) {
 }
 
 it('MIG-03 通常Shell専用。別プロセスの初回初期化が同じDB書込ロック下で競合する', async () => {
-  const directory = mkdtempSync('/workspace/dev/tp-ref-data/reference-migration-race-');
+  const directory = mkdtempSync(join(tmpdir(), 'reference-migration-race-'));
   const path = join(directory, 'db.sqlite');
   const tasks = new TaskStore(path);
   const task = tasks.create({ title: '競合前のタスク' });

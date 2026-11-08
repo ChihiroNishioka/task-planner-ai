@@ -22,6 +22,33 @@ beforeEach(() => {
 });
 afterEach(() => { store.close(); tasks.close(); rmSync(dir, { recursive: true, force: true }); vi.unstubAllEnvs(); });
 function api(fetch: (url: string) => Promise<FetchResult> = vi.fn(async (): Promise<FetchResult> => ({ ok: false, code: 'BLOCKED_URL' }))) { return createReferenceApi({ tasks, store, fetcher: { mode: 'fixture', fetch } }); }
+it.each(['削除', '許可取消'] as const)('AUTH-RACE 本文読取中の%s後はPOST/PATCHの副作用を拒否する', async change => {
+  const note = store.add(id, { kind: 'NOTE', body: '変更前' });
+  const before = store.list(id);
+  const fetch = vi.fn(async (): Promise<FetchResult> => ({ ok: false, code: 'BLOCKED_URL' }));
+  const routes = api(fetch);
+  const operations = [
+    { method: 'POST', body: { kind: 'NOTE', body: '追加しない' }, refId: undefined },
+    { method: 'POST', body: { kind: 'URL', url: 'https://example.com/' }, refId: undefined },
+    { method: 'PATCH', body: { body: '更新しない', revision: note.revision }, refId: note.id },
+  ];
+  const held = operations.map(operation => {
+    const req = request('/', operation.method);
+    let release!: () => void;
+    const body = new Promise<unknown>(resolve => { release = () => resolve(operation.body); });
+    const reading = vi.spyOn(req, 'json').mockReturnValue(body);
+    const pending = routes.handle(req, id, operation.refId);
+    return { release, reading, pending };
+  });
+  for (const { reading } of held) expect(reading).toHaveBeenCalledOnce();
+  if (change === '削除') tasks.delete(id);
+  else vi.stubEnv('ALLOWED_EMAILS', 'other@example.com');
+  for (const { release } of held) release();
+  const responses = await Promise.all(held.map(({ pending }) => pending));
+  expect(fetch).not.toHaveBeenCalled();
+  expect(store.list(id)).toEqual(before);
+  expect(responses.map(response => response.status)).toEqual(Array(3).fill(change === '削除' ? 404 : 401));
+});
 it('AUTH-01 未認証の5操作は401、DB変更と取得なし', async () => {
   const fetch = vi.fn(); const routes = api(fetch);
   for (const [method, refId, action] of [['GET', undefined, undefined], ['POST', undefined, undefined], ['PATCH', 'none', undefined], ['DELETE', 'none', undefined], ['POST', 'none', 'refetch']] as const) {

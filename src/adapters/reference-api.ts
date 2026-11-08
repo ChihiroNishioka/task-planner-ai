@@ -43,6 +43,8 @@ export function createReferenceApi({ tasks, store, fetcher }: Dependencies) {
         const key = request.headers.get('idempotency-key') ?? undefined;
         if (key && (key.length > 200 || !/^[\w.-]+$/.test(key))) return errorResponse('操作キーを確認してください。', 422);
         const existed = key ? store.hasOperation(taskId, key) : false;
+        if (!authenticated(request)) return errorResponse('ログインが必要です。', 401);
+        if (!tasks.get(taskId)) return errorResponse('タスクが見つかりません。', 404);
         if (input.kind === 'URL' && !existed) acquire();
         const item = store.add(taskId, input, key);
         if (input.kind === 'NOTE' || existed) return Response.json({ reference: item }, { status: 201 });
@@ -50,7 +52,12 @@ export function createReferenceApi({ tasks, store, fetcher }: Dependencies) {
       }
       if (!refId) return errorResponse('操作が見つかりません。', 404);
       if (request.method === 'POST' && action === 'refetch') { const item = store.require(taskId, refId); acquire(); return await fetchItem(item); }
-      if (request.method === 'PATCH' && !action) return Response.json({ reference: store.edit(taskId, refId, await request.json()) });
+      if (request.method === 'PATCH' && !action) {
+        const input = await request.json();
+        if (!authenticated(request)) return errorResponse('ログインが必要です。', 401);
+        if (!tasks.get(taskId)) return errorResponse('タスクが見つかりません。', 404);
+        return Response.json({ reference: store.edit(taskId, refId, input) });
+      }
       if (request.method === 'DELETE' && !action) { store.remove(taskId, refId); return new Response(null, { status: 204 }); }
       return errorResponse('操作が見つかりません。', 404);
     } catch (error) {

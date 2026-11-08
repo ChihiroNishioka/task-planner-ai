@@ -26,7 +26,7 @@ npm run dev
 | `AI_TIMEOUT_MS` | `120000` | タイムアウト（ミリ秒） |
 
 ```sh
-timeout 8h env AI_MODE=cli npm run start -- --port 3350
+AI_MODE=cli timeout 8h npm run start -- --port 3310
 AI_MODE=cli AI_CLI=claude timeout 8h npm run worker
 ```
 
@@ -118,13 +118,13 @@ npm run worker               # ワーカー（認証の影響なし。DATABASE_P
 
 画面の「テスト用データ」はfixtureでの成功です。「実サイトから取得」はliveで成功したURLだけに表示します。ファイルの解析は引き続きモックです。登録メモと取得済みURLは、タスク分解・ドラフト初版・既存の修正指示による改訂に共通の参考データとして渡します。資料本文はAIへの指示や承認として扱いません。
 
-この作業の通常Shell担当は、リポジトリルートで次を実行します。Codexではbuild・待受・Playwrightを実行しません。認証設定はGit管理外の環境から供給し、値を表示しません。
+関連資料をローカルで確認する場合は、リポジトリルートで次を実行します。認証設定はGit管理外の環境から供給し、値を表示しません。
 
 ```sh
 timeout 10m env DATABASE_PATH=/workspace/dev/tp-ref-data/manual/task-planner.sqlite BLOB_DIRECTORY=/workspace/dev/tp-ref-data/manual/blobs ARTIFACT_DIRECTORY=/workspace/dev/tp-ref-data/manual/artifacts REFERENCE_FETCH_MODE=live AI_MODE=mock npm run dev -- --hostname 127.0.0.1 --port 3350
 timeout 10m env TMPDIR=/workspace/dev/tp-ref-data/tmp E2E_DATA_DIR=/workspace/dev/tp-ref-data/e2e-reference E2E_OUTPUT_DIR=/workspace/dev/tp-ref-runs/playwright-results SHOT_DIR=/workspace/dev/tp-ref-runs/shots PW_PORT=3350 AI_MODE=mock npx playwright test --config=playwright.references.config.ts
 ```
 
-DB配置先とTMPDIRはあらかじめ作成します。E2Eでは手動検証や既存利用のDBディレクトリを指定しません。汎用の `playwright.config.ts` は既定の相対パスとポートを維持し、この作業の実行だけ明示環境変数で分離します。関連資料専用設定は3350とtp-ref-data配下を必須にし、fixtureだけ3351を使います。
+DB配置先とTMPDIRはあらかじめ作成します。E2Eでは手動検証や既存利用のDBディレクトリを指定しません。汎用の `playwright.config.ts` は既定の相対パスとポートを使います。関連資料専用設定は検証環境を隔離するガードとして3350とtp-ref-data配下を必須にし、fixtureだけ3351を使います。
 
-分解編集とのmain統合、参考資料のAI入力、専用DBでの検証手順は [main統合後の分解編集と関連資料](docs/REFERENCE_INTEGRATION.md) を参照してください。
+分解編集と参考資料のAI入力、専用DBでの検証手順は [分解編集と関連資料の統合検証](docs/REFERENCE_INTEGRATION.md) を参照してください。

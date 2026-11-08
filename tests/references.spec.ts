@@ -4,7 +4,7 @@ import { expect, test, type APIRequestContext, type Page } from '@playwright/tes
 import { z } from 'zod';
 import { referenceSchema, type Reference } from '../src/domain/references';
 
-const shots = process.env.SHOT_DIR ?? '/workspace/dev/tp-ref-runs/screenshots';
+const shots = process.env.SHOT_DIR ?? 'test-results/reference-shots';
 mkdirSync(shots, { recursive: true });
 async function task(request: APIRequestContext) {
   const response = await request.post('/api/tasks', { headers: { 'idempotency-key': crypto.randomUUID() }, data: { title: '関連資料の合成タスク', originalInput: '関連資料の検証', category: 'WORK' } });
