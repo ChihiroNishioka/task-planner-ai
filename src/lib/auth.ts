@@ -41,9 +41,11 @@ export function validateCsrfRequest(request: Request): boolean {
   if (!host || !origin) return false;
   try {
     const originUrl = new URL(origin);
+    if (originUrl.host.toLowerCase() !== host.toLowerCase()) return false;
+    // TLS 終端のリバースプロキシ（Tailscale Funnel）配下では request.url が http になるため、
+    // protocol はプロキシが x-forwarded-proto を付けたときだけ照合する。
     const forwardedProto = headers.get('x-forwarded-proto')?.split(',')[0].trim();
-    const protocol = forwardedProto ? `${forwardedProto}:` : new URL(request.url).protocol;
-    return originUrl.host.toLowerCase() === host.toLowerCase() && originUrl.protocol === protocol;
+    return !forwardedProto || originUrl.protocol === `${forwardedProto}:`;
   } catch {
     return false;
   }

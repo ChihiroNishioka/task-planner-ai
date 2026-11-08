@@ -6,7 +6,8 @@ const publicPaths = new Set(['/login', '/api/auth/session', '/api/auth/logout'])
 
 export function proxy(request: NextRequest) {
   const path = request.nextUrl.pathname;
-  if (path.startsWith('/_next/') || path === '/favicon.ico' || /\.(?:png|jpg|jpeg|svg|ico|css|js|woff2?)$/.test(path)) return NextResponse.next();
+  // 静的ファイルは Next のビルド成果物だけを通す。拡張子での判定は /api/tasks/x.png のような動的ルートを素通りさせるので使わない。
+  if (path.startsWith('/_next/static/') || path.startsWith('/_next/image') || path === '/favicon.ico') return NextResponse.next();
   const mode = process.env.AUTH_MODE || 'firebase';
   const authenticated = (mode === 'firebase' || mode === 'test') && !(process.env.NODE_ENV === 'production' && mode === 'test')
     && isValidSessionToken(request.cookies.get('task-planner-session')?.value, process.env.SESSION_SECRET, process.env.ALLOWED_EMAILS ?? '');
