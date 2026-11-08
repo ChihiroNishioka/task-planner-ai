@@ -259,40 +259,61 @@ test('保存前に開始した古い一覧応答は保存済みメモを消さ�
     createdAt: now, updatedAt: now, url: 'http://example.com/success', finalUrl: null,
     fetchStatus: 'FETCHING', fetchErrorCode: null, fetchMode: 'fixture', fetchedAt: null, contentType: null, truncated: false,
   };
-  let releaseOldResponse: () => void = () => { throw new Error('古い応答の待機開始前です。'); };
-  const heldResponse = new Promise<void>(resolve => { releaseOldResponse = resolve; });
-  let reads = 0;
+  let holdNextResponse = false;
   let oldResponseHeld = false;
+  let releaseOldResponse = false;
+  let nextPollStarted = false;
+  let releaseNextPoll = false;
   await page.route(`**${endpoint}`, async route => {
     if (route.request().method() !== 'GET') return route.continue();
-    reads += 1;
-    if (reads === 1) return route.fulfill({ json: { references: [fetching] } });
-    if (reads === 2) {
+    if (holdNextResponse && !oldResponseHeld) {
       oldResponseHeld = true;
-      await heldResponse;
-      return route.fulfill({ headers: { 'x-reference-stale-fixture': 'true' }, json: { references: [fetching] } });
+      await expect.poll(() => releaseOldResponse, { message: '保存完了後に古い一覧応答が解放される', timeout: 8_000 }).toBe(true);
+      return route.fulfill({ json: { references: [fetching] } });
     }
-    const response = await route.fetch();
+    if (!oldResponseHeld) return route.fulfill({ json: { references: [fetching] } });
+    if (releaseOldResponse) {
+      nextPollStarted = true;
+      await expect.poll(() => releaseNextPoll, { message: '旧応答処理後のメモ確認が終わってから次の一覧を返す', timeout: 8_000 }).toBe(true);
+    }
+    const response = await route.fetch({ timeout: 5_000 });
     const data = referenceListSchema.parse(await response.json());
-    return route.fulfill({ json: { references: [...data.references, { ...fetching, fetchStatus: 'SUCCEEDED', title: '新しい一覧のURL' }] } });
+    return route.fulfill({ json: { references: [...data.references, { ...fetching, fetchStatus: releaseOldResponse ? 'SUCCEEDED' : 'FETCHING', title: '新しい一覧のURL' }] } });
   });
   try {
-    await page.goto(`/tasks/${value.id}`);
     const panel = page.locator('[data-reference-panel]');
-    await expect.poll(() => oldResponseHeld, { timeout: 8_000 }).toBe(true);
-    await panel.getByRole('tab', { name: 'メモ', exact: true }).click();
-    await panel.getByLabel('メモの本文').fill('古い一覧で消えてはいけないメモ');
-    await panel.getByRole('button', { name: 'メモを保存', exact: true }).click();
-    await expect(panel.getByRole('status').filter({ hasText: 'メモを保存しました' })).toBeVisible();
-    const staleResponse = page.waitForResponse(response => response.headers()['x-reference-stale-fixture'] === 'true');
-    releaseOldResponse();
-    await (await staleResponse).finished();
-    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
-    await expect(panel.locator('[data-reference-kind="NOTE"]')).toContainText('古い一覧で消えてはいけないメモ');
-    await panel.getByRole('tab', { name: 'URL', exact: true }).click();
-    await expect(panel).toContainText('新しい一覧のURL');
-    await expect(panel.locator('.reference-status')).toContainText('取得済み');
-  } finally { releaseOldResponse(); }
+    await test.step('初期読込の完了とメモ保存が可能な状態を確認する', async () => {
+      await page.goto(`/tasks/${value.id}`, { timeout: 8_000 });
+      await expect(panel.getByRole('status').filter({ hasText: '資料を読み込み中' })).toHaveCount(0, { timeout: 8_000 });
+      await panel.getByRole('tab', { name: 'メモ', exact: true }).click();
+      await panel.getByLabel('メモの本文').fill('古い一覧で消えてはいけないメモ');
+      await expect(panel.getByRole('button', { name: 'メモを保存', exact: true })).toBeEnabled({ timeout: 8_000 });
+    }, { timeout: 10_000 });
+    await test.step('初期読込後の監視による古い一覧応答を保留する', async () => {
+      holdNextResponse = true;
+      await expect.poll(() => oldResponseHeld, { message: '初期読込後の監視GETが保留される', timeout: 8_000 }).toBe(true);
+    }, { timeout: 10_000 });
+    await test.step('メモを保存し最新の一覧で保存完了を確認する', async () => {
+      await panel.getByRole('button', { name: 'メモを保存', exact: true }).click({ timeout: 8_000 });
+      await expect(panel.getByRole('status').filter({ hasText: 'メモを保存しました' })).toBeVisible({ timeout: 8_000 });
+      await expect(panel.locator('[data-reference-kind="NOTE"]')).toContainText('古い一覧で消えてはいけないメモ');
+    }, { timeout: 10_000 });
+    await test.step('古い応答を処理した後も次の応答を待つ間に保存内容が残る', async () => {
+      releaseOldResponse = true;
+      await expect.poll(() => nextPollStarted, { message: '古い一覧の処理を終えた監視が次のGETを開始する', timeout: 8_000 }).toBe(true);
+      await expect(panel.locator('[data-reference-kind="NOTE"]')).toContainText('古い一覧で消えてはいけないメモ');
+      await panel.getByRole('tab', { name: 'URL', exact: true }).click();
+      await expect(panel.locator('[data-reference-kind="URL"] h3')).toHaveText('新しい一覧のURL');
+      await expect(panel.locator('.reference-status')).toContainText('取得中');
+    }, { timeout: 10_000 });
+    await test.step('最新の取得結果と保存済みメモを確認する', async () => {
+      releaseNextPoll = true;
+      await expect(panel.locator('.reference-status')).toContainText('取得済み', { timeout: 8_000 });
+      await expect(panel.locator('[data-reference-kind="URL"] h3')).toHaveText('新しい一覧のURL');
+      await panel.getByRole('tab', { name: 'メモ', exact: true }).click();
+      await expect(panel.locator('[data-reference-kind="NOTE"]')).toContainText('古い一覧で消えてはいけないメモ');
+    }, { timeout: 10_000 });
+  } finally { releaseOldResponse = true; releaseNextPoll = true; }
 });
 
 for (const width of [390, 1280]) {
@@ -318,7 +339,8 @@ for (const width of [390, 1280]) {
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
     }
     await expect(panel.locator('.reference-status')).toContainText('取得済み');
-    await expect(panel.getByText('Required', { exact: true })).toHaveCount(0);
-    await expect(panel.getByRole('tabpanel', { name: 'URL', exact: true }).getByText('必須', { exact: true })).toBeVisible();
+    await expect(panel.getByText(/Required/)).toHaveCount(0);
+    await expect(panel.getByRole('tabpanel', { name: 'URL', exact: true }).getByText(/必須/)).toBeVisible();
+    await expect(panel.getByLabel('関連するURL')).toHaveAttribute('aria-required', 'true');
   });
 }

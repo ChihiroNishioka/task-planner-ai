@@ -16,7 +16,7 @@ process.env.ARTIFACT_DIRECTORY = resolve(dataDirectory, 'playwright-artifacts');
 
 export default defineConfig({
   testDir: './tests',
-  testMatch: ['ui.spec.ts', 'auth.spec.ts'],
+  testMatch: ['ui.spec.ts', 'auth.spec.ts', 'breakdown.spec.ts'],
   fullyParallel: false,
   workers: 1,
   timeout: 60_000,

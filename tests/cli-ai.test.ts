@@ -213,3 +213,10 @@ describe('AI revision from feedback (fake runner only)', () => {
     expect(prompt.match(/<\/feedback_data>/g)).toHaveLength(1);
   });
 });
+
+
+it('CLI子環境から名前の途中にある認証情報も除外する', () => {
+  const names = ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'GOOGLE_APPLICATION_CREDENTIALS', 'SERVICE_API_KEY_EXTRA', 'private_key', 'SESSION_SECRET'];
+  const source = Object.fromEntries(names.map((name) => [name, 'synthetic']));
+  expect(buildChildEnv({ ...source, PATH: '/usr/bin', HOME: '/tmp/cli-test' })).toEqual({ PATH: '/usr/bin', HOME: '/tmp/cli-test' });
+});

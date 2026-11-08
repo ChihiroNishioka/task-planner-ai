@@ -126,3 +126,5 @@ timeout 10m env TMPDIR=/workspace/dev/tp-ref-data/tmp E2E_DATA_DIR=/workspace/de
 ```
 
 DB配置先とTMPDIRはあらかじめ作成します。E2Eでは手動検証や既存利用のDBディレクトリを指定しません。汎用の `playwright.config.ts` は既定の相対パスとポートを維持し、この作業の実行だけ明示環境変数で分離します。関連資料専用設定は3350とtp-ref-data配下を必須にし、fixtureだけ3351を使います。
+
+分解編集とのmain統合、参考資料のAI入力、専用DBでの検証手順は [main統合後の分解編集と関連資料](docs/REFERENCE_INTEGRATION.md) を参照してください。

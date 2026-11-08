@@ -6,7 +6,7 @@ import { Tab, TabList } from '@astryxdesign/core/TabList';
 import { TextInput } from '@astryxdesign/core/TextInput';
 import { TextArea } from '@astryxdesign/core/TextArea';
 import { InternationalizationProvider } from '@astryxdesign/core/i18n';
-import { Theme } from '@astryxdesign/core/theme';
+import { ThemeContext } from '@astryxdesign/core/theme';
 import { neutralTheme } from '@astryxdesign/theme-neutral/built';
 import { fetchErrors, referenceLimits, referenceSchema, type Reference } from '../../../domain/references';
 
@@ -114,7 +114,7 @@ export function ReferencePanel({ taskId, children }: { taskId: string; children:
       setMessage('資料を削除しました。');
     }
   }
-  return <InternationalizationProvider locale="ja" overrides={{ ja: { "@astryx.field.required": "必須" } }}><Theme theme={neutralTheme} mode="light"><section className="input-section reference-panel" data-reference-panel aria-label="関連資料">
+  return <InternationalizationProvider locale="ja" overrides={{ ja: { "@astryx.field.required": "必須" } }}><ThemeContext.Provider value={{ theme: neutralTheme, mode: 'light' }}><section data-astryx-theme="neutral" data-theme="light" className="input-section reference-panel" data-reference-panel aria-label="関連資料">
     <h2>関連資料</h2>
     <TabList className="reference-tabs" role="tablist" aria-label="資料の種類" value={tab} onChange={value => { const selected = tabs.find(name => name === value); if (selected) setTab(selected); }} layout="fill" size="lg">{tabs.map((name, index) => <Tab key={name} id={`ref-tab-${index}`} value={name} label={name} panelId={`ref-panel-${index}`} onFocus={() => setTab(name)} />)}</TabList>
     <div id="ref-panel-0" role="tabpanel" aria-labelledby="ref-tab-0" hidden={tab !== 'ファイル'}>{children}</div>
@@ -132,7 +132,7 @@ export function ReferencePanel({ taskId, children }: { taskId: string; children:
       {!loading && !loadError && !references.some(item => item.kind === 'URL') ? <p>URLはまだありません。</p> : null}
       <ul className="reference-list">{references.map(item => item.kind === 'URL' ? <li key={item.id} data-reference-kind="URL"><h3>{item.title || 'URL資料'}</h3><SafeLink url={item.url} /><p className="reference-status">{item.fetchStatus === 'SUCCEEDED' ? '取得済み' : item.fetchStatus === 'FETCHING' ? '取得中' : '取得失敗'}・{item.fetchMode === 'fixture' ? 'テスト用データ' : item.fetchStatus === 'SUCCEEDED' ? '実サイトから取得' : '実サイト取得モード'}</p>{item.fetchErrorCode ? <p className="error">{fetchErrors[item.fetchErrorCode]}</p> : null}{item.fetchStatus !== 'SUCCEEDED' && item.body ? <p>以前に取得した本文です。最新の取得は完了していないためAI入力には使用しません。</p> : null}{item.truncated ? <p>本文の一部のみ保存</p> : null}{item.body ? <details><summary>本文を確認</summary><p className="reference-body">{item.body}</p></details> : null}<div className="reference-actions"><button type="button" className="secondary-button" disabled={pending || item.fetchStatus === 'FETCHING'} onClick={() => void mutate(`${endpoint}/${item.id}/refetch`, 'POST')}>再取得</button><button type="button" className="secondary-button" disabled={pending} onClick={() => void remove(item)}>削除</button></div></li> : null)}</ul>
     </div>
-  </section></Theme></InternationalizationProvider>;
+  </section></ThemeContext.Provider></InternationalizationProvider>;
 }
 
 function SafeLink({ url }: { url: string }) {

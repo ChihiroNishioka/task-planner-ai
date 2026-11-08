@@ -1,0 +1,17 @@
+.editor { margin: 22px 0; padding: 18px; border: 1px solid #d9dedb; border-radius: 14px; background: #fafbf9; color-scheme: light; overflow-wrap: anywhere; }
+.heading { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.heading h2 { margin: 0; font-size: 20px; }
+.badge { padding: 4px 10px; border-radius: 20px; background: #e8eee9; font-size: 12px; }
+.hint { font-size: 13px; color: #506059; }
+.list { list-style: none; padding: 0; display: grid; gap: 12px; }
+.step { min-width: 0; padding: 12px; background: white; border: 1px solid #d9dedb; border-radius: 10px; }
+.editor label { display: block; margin-bottom: 6px; font-size: 14px; font-weight: 650; }
+.editor textarea, .editor select { width: 100%; max-width: 100%; min-height: 44px; padding: 10px; border: 1px solid #aebbb4; border-radius: 8px; background: white; color: #192329; font: inherit; }
+.editor textarea { resize: vertical; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.editor button { min-height: 44px; height: auto; min-width: 44px; max-width: 100%; white-space: normal; padding: 10px 12px; }
+.comment { margin-top: 22px; padding-top: 18px; border-top: 1px solid #d9dedb; }
+.history { margin-top: 22px; border-top: 1px solid #d9dedb; padding-top: 14px; }
+.history summary { min-height: 44px; cursor: pointer; font-weight: 650; }
+.warning { padding: 12px; background: #fff1d6; color: #744400; border-radius: 8px; }
+@media (max-width: 460px) { .editor { padding: 12px; } .step { padding: 10px; } }
