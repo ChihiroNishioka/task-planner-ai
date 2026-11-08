@@ -1,4 +1,4 @@
-import { aiMode, preparationAdapter, preparationStore, scheduleStore, taskStore, workerStatusStore } from '../adapters/runtime';
+import { referenceStore, aiMode, preparationAdapter, preparationStore, scheduleStore, taskStore, workerStatusStore } from '../adapters/runtime';
 import { WORKER_BEAT_MS } from '../adapters/worker-status';
 
 let running = true;
@@ -29,6 +29,7 @@ async function run() {
 void run().catch(() => {
   process.exitCode = 1;
 }).finally(() => {
+  referenceStore.close();
   workerStatusStore.close();
   preparationStore.close();
   scheduleStore.close();

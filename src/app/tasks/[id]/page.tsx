@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { ReferencePanel } from './reference-panel';
 import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { z } from 'zod';
 import { taskResponseSchema } from '../../../domain/task';
@@ -26,7 +27,7 @@ export default function TaskDetail({ params }: { params: Promise<{ id: string }>
   const [loading, setLoading] = useState(true);
   const [inputs, setInputs] = useState<z.infer<typeof inputListSchema>['inputs']>([]);
   const [uploading, setUploading] = useState(false);
-  const [uploadMessage, setUploadMessage] = useState('');
+  const [uploadMessage, setUploadMessage] = useState('添付を読み込み中…');
   const [jobMessage, setJobMessage] = useState('');
   const [preparing, setPreparing] = useState(false);
   const [deadlineTime, setDeadlineTime] = useState('');
@@ -64,9 +65,6 @@ export default function TaskDetail({ params }: { params: Promise<{ id: string }>
       if (!response.ok) throw new Error('タスクを読み込めませんでした。');
       return taskResponseSchema.parse(await response.json());
     }).then(async ({ task: value }) => {
-      const response = await fetch(`/api/tasks/${value.id}/inputs`);
-      if (!response.ok) throw new Error('添付を読み込めませんでした。');
-      const data = inputListSchema.parse(await response.json());
       const artifactsResponse = await fetch(`/api/tasks/${value.id}/artifacts`);
       if (!artifactsResponse.ok) throw new Error('成果物を読み込めませんでした。');
       const artifactList = latestArtifactSchema.parse(await artifactsResponse.json()).artifacts;
@@ -76,7 +74,6 @@ export default function TaskDetail({ params }: { params: Promise<{ id: string }>
       const scheduleData = scheduleResponseSchema.parse(await scheduleResponse.json());
       if (active) {
         setTask(value);
-        setInputs(data.inputs);
         setLatest(artifactList.at(-1) ?? null);
         setJobMessage(artifactCount ? `${artifactCount}件の成果物があります。` : '');
         if (['QUEUED', 'RUNNING'].includes(value.aiStatus)) void waitForGeneration(value.id);
@@ -86,6 +83,31 @@ export default function TaskDetail({ params }: { params: Promise<{ id: string }>
     }).catch((cause: unknown) => { if (active) setError(userMessage(cause, 'タスクを読み込めませんでした。')); }).finally(() => { if (active) setLoading(false); }));
     return () => { active = false; };
   }, [params, waitForGeneration]);
+  const loadFiles = useCallback(async (taskId: string) => {
+    try {
+      const response = await fetch(`/api/tasks/${taskId}/inputs`);
+      if (!response.ok) throw new Error('添付を読み込めませんでした。');
+      setInputs(inputListSchema.parse(await response.json()).inputs);
+      setUploadMessage('');
+    } catch { setUploadMessage('添付を読み込めませんでした。再読み込みしてください。'); }
+  }, []);
+  useEffect(() => {
+    if (!task?.id) return;
+    const taskId = task.id;
+    let cancelled = false;
+    async function fetchFiles() {
+      try {
+        const response = await fetch(`/api/tasks/${taskId}/inputs`);
+        if (!response.ok) throw new Error('添付を読み込めませんでした。');
+        const data = inputListSchema.parse(await response.json());
+        if (!cancelled) { setInputs(data.inputs); setUploadMessage(''); }
+      } catch {
+        if (!cancelled) setUploadMessage('添付を読み込めませんでした。再読み込みしてください。');
+      }
+    }
+    void fetchFiles();
+    return () => { cancelled = true; };
+  }, [task?.id]);
   async function addFiles(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
@@ -145,7 +167,7 @@ export default function TaskDetail({ params }: { params: Promise<{ id: string }>
     } finally { setScheduling(false); }
   }
   return <main className="shell"><header className="topbar"><Link href="/" className="back-link">← タスク一覧</Link><span className="mock-label">モック</span></header>
-    {loading ? <p className="state" role="status">読み込み中…</p> : error ? <div className="state error" role="alert">{error}</div> : task ? <article className="detail-card"><p className="eyebrow">タスク詳細</p><h1>{task.title}</h1><p className="detail-label">元の入力</p><p>{task.originalInput || '入力なし'}</p><p className="detail-label">期限</p><p>{task.deadline ?? '期限なし'}</p><p className="detail-label">状態</p><p>{statusLabel(task.status)} / AI {aiStatusLabel(task.aiStatus)}</p><button className="primary-button" disabled={preparing || generating} onClick={() => void prepareTask()}>{preparing ? '準備中…' : generating ? 'AIが作成中…' : latest ? 'AIでもう一度作る' : 'AI準備を依頼'}</button><p role="status">{jobMessage}</p>{generating ? <p className="state ai-loading" role="status">AIが作成中…（タスク分解とドラフト。1〜2分かかることがあります）</p> : null}{latest ? <AiResult artifact={latest} /> : null}<form className="schedule-form" onSubmit={saveSchedule}><label htmlFor="task-deadline-time">締切日時（日本時間）</label><input id="task-deadline-time" type="datetime-local" value={deadlineTime} onChange={(event) => setDeadlineTime(event.target.value)} /><button className="secondary-button" disabled={scheduling}>{scheduling ? '保存中…' : '期限と通知を設定'}</button><p role="status">{scheduleMessage}</p></form><p className="detail-label">カテゴリ・種別</p><p>{categoryLabel(task.category)} / {taskTypeLabel(task.taskType)}</p><section className="input-section"><h2>関連資料</h2><p>画像・PDF・音声ファイルを添付できます。解析はモックのため行いません。</p><form onSubmit={addFiles}><label htmlFor="task-files">ファイルを選択</label><input id="task-files" name="files" type="file" accept="image/*,application/pdf,audio/*" multiple /><button className="secondary-button" disabled={uploading}>{uploading ? '保存中…' : '添付を保存'}</button></form><p role="status">{uploadMessage}</p><ul>{inputs.map((input) => <li key={input.id}>{inputTypeLabel(input.type)}・{input.name}・モック</li>)}</ul></section><p className="detail-label">版履歴</p><p>{latest ? `最新 v${latest.version}・${latest.modeLabel}` : 'ドラフトはまだありません。'}</p><Link className="primary-button link-button" href={`/tasks/${task.id}/review`}>ドラフトレビュー</Link></article> : null}
+    {loading ? <p className="state" role="status">読み込み中…</p> : error ? <div className="state error" role="alert">{error}</div> : task ? <article className="detail-card"><p className="eyebrow">タスク詳細</p><h1>{task.title}</h1><p className="detail-label">元の入力</p><p>{task.originalInput || '入力なし'}</p><p className="detail-label">期限</p><p>{task.deadline ?? '期限なし'}</p><p className="detail-label">状態</p><p>{statusLabel(task.status)} / AI {aiStatusLabel(task.aiStatus)}</p><button className="primary-button" disabled={preparing || generating} onClick={() => void prepareTask()}>{preparing ? '準備中…' : generating ? 'AIが作成中…' : latest ? 'AIでもう一度作る' : 'AI準備を依頼'}</button><p role="status">{jobMessage}</p>{generating ? <p className="state ai-loading" role="status">AIが作成中…（タスク分解とドラフト。1〜2分かかることがあります）</p> : null}{latest ? <AiResult artifact={latest} /> : null}<form className="schedule-form" onSubmit={saveSchedule}><label htmlFor="task-deadline-time">締切日時（日本時間）</label><input id="task-deadline-time" type="datetime-local" value={deadlineTime} onChange={(event) => setDeadlineTime(event.target.value)} /><button className="secondary-button" disabled={scheduling}>{scheduling ? '保存中…' : '期限と通知を設定'}</button><p role="status">{scheduleMessage}</p></form><p className="detail-label">カテゴリ・種別</p><p>{categoryLabel(task.category)} / {taskTypeLabel(task.taskType)}</p><ReferencePanel taskId={task.id}><p>画像・PDF・音声ファイルを添付できます。解析はモックのため行いません。</p><form onSubmit={addFiles}><label htmlFor="task-files">ファイルを選択</label><input id="task-files" name="files" type="file" accept="image/*,application/pdf,audio/*" multiple /><button className="secondary-button" disabled={uploading}>{uploading ? '保存中…' : '添付を保存'}</button></form><p role="status">{uploadMessage}</p>{uploadMessage.startsWith('添付を読み込めません') ? <button type="button" className="secondary-button" onClick={() => void loadFiles(task.id)}>添付を再読み込み</button> : null}{!uploadMessage && !inputs.length ? <p>ファイルはまだありません。</p> : null}<ul>{inputs.map((input) => <li key={input.id}>{inputTypeLabel(input.type)}・{input.name}・モック</li>)}</ul></ReferencePanel><p className="detail-label">版履歴</p><p>{latest ? `最新 v${latest.version}・${latest.modeLabel}` : 'ドラフトはまだありません。'}</p><Link className="primary-button link-button" href={`/tasks/${task.id}/review`}>ドラフトレビュー</Link></article> : null}
   </main>;
 }
 

@@ -1,9 +1,10 @@
+import type { Reference } from '../domain/references';
 import type { Task } from '../domain/task';
 import { generationSchema, type Generation } from '../domain/preparation';
 
 export interface PreparationAdapter {
-  generate(task: Task): Promise<Generation>;
-  revise?(task: Task, previousContent: string, feedback: string): Promise<Generation>;
+  generate(task: Task, context?: readonly Reference[]): Promise<Generation>;
+  revise?(task: Task, previousContent: string, feedback: string, context?: readonly Reference[]): Promise<Generation>;
 }
 
 export class MockAiAdapter implements PreparationAdapter {
