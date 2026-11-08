@@ -51,3 +51,13 @@
 /workspace/dev/task-planner-ai/.runs/ に結果の要約ファイルを日本語で書く。今回の指定先は req-result.md。以降は作業を識別できる名前を使う。目的、変更ファイル、実行した検証と結果、未実行項目、制約、次の判断、LESSONSに入れたい候補を短く残す。停止時は EXPECTED / SAW / 触ったファイル / 行き止まりを必須とする。
 
 LESSONS.md は今回見出しだけで作る。教訓の候補は結果ファイルに記録し、確定していない教訓を勝手に追記しない。
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+## This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->
