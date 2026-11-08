@@ -1,0 +1,67 @@
+import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { expect, test } from '@playwright/test';
+import { z } from 'zod';
+import { breakdownSnapshotSchema } from '../src/domain/breakdown';
+
+const shots = process.env.SHOT_DIR ?? 'test-results/reference-breakdown-shots';
+mkdirSync(shots, { recursive: true });
+
+for (const width of [390, 1280]) {
+  test(`分解編集とメモURLが同じ画面で共存する ${width}`, async ({ page, request }) => {
+    await page.setViewportSize({ width, height: 844 });
+    const created = await request.post('/api/tasks', { data: { title: '資料と分解の共存確認', category: 'STUDY' } });
+    expect(created.status()).toBe(201);
+    const { task } = z.object({ task: z.object({ id: z.string() }) }).parse(await created.json());
+    await page.goto(`/tasks/${task.id}`);
+    const editor = page.getByRole('region', { name: '分解編集' });
+    const panel = page.getByRole('region', { name: '関連資料' });
+    await expect(page.locator('html')).not.toHaveAttribute('data-astryx-theme');
+    await expect(editor.getByText('項目はありません。「項目を追加」から作成できます。')).toBeVisible();
+    await editor.getByRole('button', { name: '項目を追加', exact: true }).click();
+    const first = editor.getByLabel('項目 1', { exact: true });
+    await first.fill('保存前の分解を保持する');
+    await panel.getByRole('tab', { name: 'メモ', exact: true }).click();
+    await panel.getByLabel('メモの本文').fill('分解に使う参考メモ');
+    await panel.getByRole('button', { name: 'メモを保存', exact: true }).click();
+    const note = panel.locator('[data-reference-kind="NOTE"]');
+    await expect(note).toContainText('分解に使う参考メモ');
+    await expect(first).toHaveValue('保存前の分解を保持する');
+    await panel.getByRole('tab', { name: 'URL', exact: true }).click();
+    await panel.getByLabel('関連するURL').fill('http://example.com/success');
+    await panel.getByRole('button', { name: 'URLを追加', exact: true }).click();
+    const url = panel.locator('[data-reference-kind="URL"]').filter({ has: page.getByRole('link', { name: 'http://example.com/success', exact: true }) });
+    await expect(url).toContainText('取得済み');
+    await expect(url).toContainText('テスト用データ');
+    await expect(first).toHaveValue('保存前の分解を保持する');
+    await editor.getByRole('button', { name: 'ユーザー編集版を保存' }).click();
+    await expect(editor.getByText('ユーザー編集版を保存しました。', { exact: true })).toBeVisible();
+    const initial = breakdownSnapshotSchema.parse(await (await request.get(`/api/tasks/${task.id}/breakdown`)).json());
+    await first.fill('別版の分解を保存する');
+    await editor.getByRole('button', { name: 'ユーザー編集版を保存' }).click();
+    await expect(editor.getByText('ユーザー編集版を保存しました。', { exact: true })).toBeVisible();
+    await editor.locator('summary').click();
+    await editor.getByLabel('表示する分解版').selectOption(initial.versions[0]!.id);
+    await editor.getByRole('button', { name: 'この版を復元', exact: true }).click();
+    await expect(editor.getByText('新しい復元版を保存しました。', { exact: true })).toBeVisible();
+    await expect(first).toHaveValue('保存前の分解を保持する');
+    await expect(url).toContainText('取得済み');
+    await panel.getByRole('tab', { name: 'メモ', exact: true }).click();
+    await expect(note).toContainText('分解に使う参考メモ');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    await page.screenshot({ path: join(shots, `reference-breakdown-${width}.png`), fullPage: true });
+    await page.reload();
+    await expect(first).toHaveValue('保存前の分解を保持する');
+    await panel.getByRole('tab', { name: 'メモ', exact: true }).click();
+    await expect(note).toContainText('分解に使う参考メモ');
+    await note.getByRole('button', { name: '編集', exact: true }).click();
+    await panel.getByLabel('メモの本文').fill('編集後も分解を保持する');
+    await panel.getByRole('button', { name: '変更を保存', exact: true }).click();
+    await expect(note).toContainText('編集後も分解を保持する');
+    page.once('dialog', dialog => dialog.accept());
+    await note.getByRole('button', { name: '削除', exact: true }).click();
+    await expect(note).toHaveCount(0);
+    await expect(page.locator('html')).not.toHaveAttribute('data-astryx-theme');
+    await expect(first).toHaveValue('保存前の分解を保持する');
+  });
+}

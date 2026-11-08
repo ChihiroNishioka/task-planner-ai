@@ -100,3 +100,31 @@ npm run worker               # ワーカー（認証の影響なし。DATABASE_P
 3. 許可していない Google アカウントで試すと「このGoogleアカウントでは使えません。」と出て入れないことを確かめます。
 4. 「ログアウト」を押すと `/login` に戻り、`/api/tasks` が 401 になることを確かめます。
 5. 「ログインの設定が足りません」と出たら、FIREBASE_* / SESSION_SECRET / ALLOWED_EMAILS のどれかが未設定です。`auth/unauthorized-domain` 相当のエラーなら、承認済みドメインの追加を確認します。
+
+
+## 関連資料を使う
+
+タスク詳細の「関連資料」で「ファイル」「メモ」「URL」を切り替えます。メモは保存・編集・削除できます。URLはサーバーでタイトルと本文を取得します。失敗してもURLを残し、理由と「再取得」を表示します。再取得に失敗した以前の本文は画面で確認できますが、AI入力には使いません。全資料APIはログインが必要で、変更操作には同一Originを要求します。
+
+メモは題名200字、本文20,000字、URLは2,048字です。タスクごとのメモとURLは合計50件までです。URL取得はHTTPとHTTPSの80・443番だけを許可し、全体10秒、圧縮前後2MiB、転送5回を上限にします。HTMLまたはプレーンテキストから本文50,000字までを保存します。詳しい拒否条件は [アーキテクチャ](ARCHITECTURE.md) に記載しています。
+
+| 環境変数 | 既定 | 動作 |
+| --- | --- | --- |
+| `REFERENCE_FETCH_MODE` | `live` | 公開ページを実取得する。`off` はURL保存後に取得無効を表示する |
+| `REFERENCE_FETCH_MODE=fixture` | 明示指定のみ | 開発検証専用。example.comの合成ページを127.0.0.1:3351から取得する。本番では起動を拒否する |
+| `E2E_DATA_DIR` | `data` | Playwright専用DB・blob・成果物の配置先。実行時に検証用データを初期化する |
+| `E2E_OUTPUT_DIR` | `test-results` | Playwrightの出力先 |
+| `SHOT_DIR` | 関連資料テストで指定 | スクリーンショットの出力先 |
+
+画面の「テスト用データ」はfixtureでの成功です。「実サイトから取得」はliveで成功したURLだけに表示します。ファイルの解析は引き続きモックです。登録メモと取得済みURLは、タスク分解・ドラフト初版・既存の修正指示による改訂に共通の参考データとして渡します。資料本文はAIへの指示や承認として扱いません。
+
+関連資料をローカルで確認する場合は、リポジトリルートで次を実行します。認証設定はGit管理外の環境から供給し、値を表示しません。
+
+```sh
+timeout 10m env DATABASE_PATH=/workspace/dev/tp-ref-data/manual/task-planner.sqlite BLOB_DIRECTORY=/workspace/dev/tp-ref-data/manual/blobs ARTIFACT_DIRECTORY=/workspace/dev/tp-ref-data/manual/artifacts REFERENCE_FETCH_MODE=live AI_MODE=mock npm run dev -- --hostname 127.0.0.1 --port 3350
+timeout 10m env TMPDIR=/workspace/dev/tp-ref-data/tmp E2E_DATA_DIR=/workspace/dev/tp-ref-data/e2e-reference E2E_OUTPUT_DIR=/workspace/dev/tp-ref-runs/playwright-results SHOT_DIR=/workspace/dev/tp-ref-runs/shots PW_PORT=3350 AI_MODE=mock npx playwright test --config=playwright.references.config.ts
+```
+
+DB配置先とTMPDIRはあらかじめ作成します。E2Eでは手動検証や既存利用のDBディレクトリを指定しません。汎用の `playwright.config.ts` は既定の相対パスとポートを使います。関連資料専用設定は検証環境を隔離するガードとして3350とtp-ref-data配下を必須にし、fixtureだけ3351を使います。
+
+分解編集と参考資料のAI入力、専用DBでの検証手順は [分解編集と関連資料の統合検証](docs/REFERENCE_INTEGRATION.md) を参照してください。

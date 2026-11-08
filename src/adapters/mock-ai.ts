@@ -1,11 +1,12 @@
+import type { Reference } from '../domain/references';
 import type { BreakdownGeneration } from '../domain/breakdown';
 import type { Task } from '../domain/task';
 import { generationSchema, type Generation } from '../domain/preparation';
 
 export interface PreparationAdapter {
-  breakdown?(task: Task, steps: string[], comment: string): Promise<BreakdownGeneration>;
-  generate(task: Task): Promise<Generation>;
-  revise?(task: Task, previousContent: string, feedback: string): Promise<Generation>;
+  breakdown?(task: Task, steps: string[], comment: string, context?: readonly Reference[]): Promise<BreakdownGeneration>;
+  generate(task: Task, context?: readonly Reference[]): Promise<Generation>;
+  revise?(task: Task, previousContent: string, feedback: string, context?: readonly Reference[]): Promise<Generation>;
 }
 
 export class MockAiAdapter implements PreparationAdapter {

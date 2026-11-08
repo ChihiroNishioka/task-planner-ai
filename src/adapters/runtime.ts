@@ -1,3 +1,7 @@
+import { ReferenceStore } from './reference-store';
+import { createReferenceFetcherFromEnv } from './reference-fetcher';
+import { createReferenceApi } from './reference-api';
+import { withReferences } from './with-references';
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { BreakdownStore } from './breakdown-store';
@@ -16,6 +20,7 @@ const databasePath = resolve(process.env.DATABASE_PATH || 'data/task-planner.sql
 mkdirSync(dirname(databasePath), { recursive: true });
 
 declare global {
+  var __referenceStore: ReferenceStore | undefined;
   var __breakdownStore: BreakdownStore | undefined;
   var __taskStore: TaskStore | undefined;
   var __inputStore: InputStore | undefined;
@@ -28,12 +33,15 @@ declare global {
 export const taskStore = globalThis.__taskStore ??= new TaskStore(databasePath);
 export const inputStore = globalThis.__inputStore ??= new InputStore(databasePath, resolve(process.env.BLOB_DIRECTORY || 'data/blobs'));
 export const preparationStore = globalThis.__preparationStore ??= new PreparationStore(databasePath, resolve(process.env.ARTIFACT_DIRECTORY || 'data/artifacts'));
+export const referenceStore = globalThis.__referenceStore ??= new ReferenceStore(databasePath);
+export const referenceFetcher = createReferenceFetcherFromEnv();
+export const referenceApi = createReferenceApi({ tasks: taskStore, store: referenceStore, fetcher: referenceFetcher });
 export const mockAiAdapter = new MockAiAdapter();
 export { aiMode };
 /** AI_MODE=cli のときはサブスクCLIの実AIを使い、失敗時はモックに戻す。 */
-export const preparationAdapter: PreparationAdapter = aiMode === 'cli'
+export const preparationAdapter: PreparationAdapter = withReferences(aiMode === 'cli'
   ? new FallbackAiAdapter(new CliAiAdapter(createCliRunnerFromEnv()), mockAiAdapter)
-  : mockAiAdapter;
+  : mockAiAdapter, referenceStore);
 export const scheduleStore = globalThis.__scheduleStore ??= new ScheduleStore(databasePath);
 export const mockCalendarAdapter = new MockCalendarAdapter();
 export const reviewStore = globalThis.__reviewStore ??= new ReviewStore(databasePath);
