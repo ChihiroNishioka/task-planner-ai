@@ -13,6 +13,25 @@ npm run dev
 
 ブラウザーで `http://localhost:3000` を開きます。秘密値は `.env.local` に置き、ソースやログへ書かないでください。別ターミナルでworkerを動かす場合は `timeout 1h npm run worker` を実行します。
 
+## 実AI（サブスクCLI）でタスク分解とドラフトを作る
+
+既定はモックです。`AI_MODE=cli` を **Web とワーカーの両方** に設定すると、ワーカーがローカルにログイン済みの `claude`（既定）または `codex` を呼び、タスク分解とドラフトを作ります。APIキーは使いません。
+
+| 環境変数 | 既定 | 説明 |
+| --- | --- | --- |
+| `AI_MODE` | 未設定（モック） | `cli` で実AIを使う |
+| `AI_CLI` | `claude` | `claude` または `codex` |
+| `AI_CLI_MODEL` | `sonnet`（claude） | モデル名。codex は未指定ならCLIの既定 |
+| `AI_CLI_PATH` | `claude` / `codex` | 実行ファイルのパス |
+| `AI_TIMEOUT_MS` | `120000` | タイムアウト（ミリ秒） |
+
+```sh
+AI_MODE=cli timeout 8h npm run start -- --port 3310
+AI_MODE=cli AI_CLI=claude timeout 8h npm run worker
+```
+
+CLIが見つからない・エラー終了・タイムアウト・出力不正のときはモックに戻し、画面に「モック（AI失敗: 理由）」と表示します。ワーカーが動いていないと「AIが作成中…」のままになります。修正指示による改訂は今回もモックです。
+
 ## テストと確認
 
 ```sh

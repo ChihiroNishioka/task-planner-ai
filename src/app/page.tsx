@@ -24,6 +24,18 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [aiReal, setAiReal] = useState(false);
+  useEffect(() => {
+    let active = true;
+    void fetch('/api/services').then(async (response) => {
+      if (!response.ok) return;
+      const body: unknown = await response.json();
+      const services = typeof body === 'object' && body !== null && 'services' in body && Array.isArray(body.services) ? body.services as unknown[] : [];
+      const real = services.some((service) => typeof service === 'object' && service !== null && 'name' in service && 'mode' in service && service.name === 'AI' && service.mode === 'cli');
+      if (active) setAiReal(real);
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, []);
 
   async function loadTasks() {
     setLoading(true);
@@ -91,7 +103,7 @@ export default function Home() {
 
   return <main className="shell">
     <header className="topbar"><div><p className="eyebrow">TASK PLANNER AI</p><h1>タスク</h1></div><Link className="secondary-button" href="/settings">設定</Link></header>
-    <p className="mock-banner" role="status">外部サービスはすべてモックです</p>
+    <p className="mock-banner" role="status">{aiReal ? 'AIはサブスクCLIで生成します（失敗時はモック）。ほかの外部サービスはモックです' : '外部サービスはすべてモックです'}</p>
     <form className="task-form" onSubmit={createTask}>
       <label htmlFor="task-title">新しいタスク</label>
       <textarea id="task-title" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="やることを入力" rows={2} />

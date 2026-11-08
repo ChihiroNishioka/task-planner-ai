@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { preparationStore, taskStore } from '../../../../../adapters/runtime';
+import { aiMode, preparationStore, taskStore } from '../../../../../adapters/runtime';
 
 export const runtime = 'nodejs';
 
@@ -10,7 +10,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   try {
     const operationKey = request.headers.get('idempotency-key') ?? undefined;
     const job = preparationStore.enqueue(task, operationKey);
-    return NextResponse.json({ job, label: 'モック' }, { status: 202 });
+    return NextResponse.json({ job, aiMode, label: aiMode === 'cli' ? 'AI生成（失敗時はモック）' : 'モック' }, { status: 202 });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : '準備を開始できません。' }, { status: 409 });
   }

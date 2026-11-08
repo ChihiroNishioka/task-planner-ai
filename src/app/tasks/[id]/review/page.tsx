@@ -6,7 +6,7 @@ import { z } from 'zod';
 
 const artifactSchema = z.object({
   id: z.string(), versionId: z.string(), parentVersionId: z.string().nullable(), taskId: z.string(), version: z.number(),
-  mode: z.literal('mock'), saveStatus: z.literal('MOCK_SAVED'), createdAt: z.string(),
+  mode: z.enum(['ai', 'mock', 'mock_fallback']), modeLabel: z.string().default('モック'), saveStatus: z.literal('MOCK_SAVED'), createdAt: z.string(),
   plan: z.object({ objective: z.string(), steps: z.array(z.string()), requiredInputs: z.array(z.string()), humanCheckpoints: z.array(z.string()), assumptions: z.array(z.string()) }),
   content: z.string(), changeSummary: z.string(), rating: z.enum(['UNRATED', 'GOOD', 'BAD']), approval: z.enum(['UNAPPROVED', 'APPROVED', 'REVOKED']),
 });
@@ -85,7 +85,7 @@ export default function Review({ params }: { params: Promise<{ id: string }> }) 
   const current = data.artifacts.at(-1);
   return <main className="shell"><header className="topbar"><Link href={taskId ? `/tasks/${taskId}` : '/'} className="back-link">← タスク詳細</Link><span className="mock-label">モック</span></header><section className="detail-card"><p className="eyebrow">ドラフト比較</p><h1>成果物レビュー</h1>
     {loading ? <p className="state" role="status">読み込み中…</p> : error && data.artifacts.length === 0 ? <div className="state error" role="alert">{error}</div> : !current ? <div className="state empty"><h2>ドラフトはありません</h2><p>タスク詳細からモックAI準備を依頼できます。</p></div> : <>
-      <p>保存状態 MOCK_SAVED・サービス モック</p>
+      <p>保存状態 MOCK_SAVED（ローカル保存・Drive連携はモック）</p>
       <div className="version-grid">{data.artifacts.map((artifact) => <VersionCard key={artifact.versionId} artifact={artifact} busy={busy} onAction={reviewVersion} />)}</div>
       <section className="plan-section"><h2>作業計画</h2><p>{current.plan.objective}</p><ol>{current.plan.steps.map((step) => <li key={step}>{step}</li>)}</ol><p>人の確認: {current.plan.humanCheckpoints.join('、')}</p></section>
       <form className="feedback-form" onSubmit={(event) => void revise(event)}><label htmlFor="feedback">修正指示</label><textarea id="feedback" rows={3} value={feedback} onChange={(event) => setFeedback(event.target.value)} maxLength={20_000} required /><button className="primary-button" disabled={busy}>{busy ? '保存中…' : '修正版を作る（モック）'}</button></form>
@@ -96,5 +96,5 @@ export default function Review({ params }: { params: Promise<{ id: string }> }) 
 }
 
 function VersionCard({ artifact, busy, onAction }: { artifact: Artifact; busy: boolean; onAction: (versionId: string, action: 'GOOD' | 'BAD' | 'APPROVED' | 'REVOKED') => Promise<void> }) {
-  return <article className="version-card"><h2>v{artifact.version}</h2><p>{artifact.changeSummary}</p><pre>{artifact.content}</pre><p>評価 {artifact.rating}・最終版 {artifact.approval}</p><div className="review-actions"><button className="secondary-button" disabled={busy} onClick={() => void onAction(artifact.versionId, 'GOOD')}>Good</button><button className="secondary-button" disabled={busy} onClick={() => void onAction(artifact.versionId, 'BAD')}>Bad</button>{artifact.approval === 'APPROVED' ? <button className="secondary-button" disabled={busy} onClick={() => void onAction(artifact.versionId, 'REVOKED')}>承認を取消</button> : <button className="secondary-button" disabled={busy} onClick={() => void onAction(artifact.versionId, 'APPROVED')}>最終版として承認</button>}</div></article>;
+  return <article className="version-card"><h2>v{artifact.version}</h2><p className={artifact.mode === 'ai' ? 'mode-badge mode-ai' : 'mode-badge mode-fallback'}>{artifact.modeLabel}</p><p>{artifact.changeSummary}</p><pre>{artifact.content}</pre><p>評価 {artifact.rating}・最終版 {artifact.approval}</p><div className="review-actions"><button className="secondary-button" disabled={busy} onClick={() => void onAction(artifact.versionId, 'GOOD')}>Good</button><button className="secondary-button" disabled={busy} onClick={() => void onAction(artifact.versionId, 'BAD')}>Bad</button>{artifact.approval === 'APPROVED' ? <button className="secondary-button" disabled={busy} onClick={() => void onAction(artifact.versionId, 'REVOKED')}>承認を取消</button> : <button className="secondary-button" disabled={busy} onClick={() => void onAction(artifact.versionId, 'APPROVED')}>最終版として承認</button>}</div></article>;
 }

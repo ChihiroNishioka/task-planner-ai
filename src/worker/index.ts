@@ -1,4 +1,4 @@
-import { mockAiAdapter, preparationStore, scheduleStore, taskStore } from '../adapters/runtime';
+import { preparationAdapter, preparationStore, scheduleStore, taskStore } from '../adapters/runtime';
 
 let running = true;
 process.on('SIGINT', () => { running = false; });
@@ -8,7 +8,7 @@ async function run() {
   const once = process.argv.includes('--once');
   while (running) {
     await scheduleStore.processDue(new Date(), taskStore, preparationStore);
-    const job = await preparationStore.runNext(taskStore, mockAiAdapter);
+    const job = await preparationStore.runNext(taskStore, preparationAdapter);
     if (once) break;
     if (!job) await new Promise((resolve) => setTimeout(resolve, 1000));
   }
