@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { mockAiAdapter, preparationStore, reviewStore, taskStore } from '../../../../../adapters/runtime';
+import { preparationAdapter, preparationStore, reviewStore, taskStore } from '../../../../../adapters/runtime';
 import { modeLabel } from '../../../../../domain/preparation';
 
 export const runtime = 'nodejs';
@@ -11,10 +11,10 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   if (!taskStore.get(id)) return NextResponse.json({ error: 'タスクが見つかりません。' }, { status: 404 });
   try {
     const feedback = feedbackSchema.parse(await request.json());
-    const artifact = await preparationStore.revise(id, feedback.content, taskStore, mockAiAdapter);
-    return NextResponse.json({ artifact: publicArtifact(artifact), label: 'モック' }, { status: 201 });
+    const artifact = await preparationStore.revise(id, feedback.content, taskStore, preparationAdapter);
+    return NextResponse.json({ artifact: publicArtifact(artifact), label: modeLabel(artifact.mode, artifact.fallbackReason) }, { status: 201 });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : '修正指示を確認してください。' }, { status: 422 });
+    return NextResponse.json({ error: error instanceof Error && /[\u3040-\u30ff\u4e00-\u9fff]/.test(error.message) ? error.message : '修正指示を確認してください。' }, { status: 422 });
   }
 }
 

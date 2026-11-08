@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { taskResponseSchema } from '../../../domain/task';
 import { preparationJobSchema } from '../../../domain/preparation';
 import { scheduleRecordSchema } from '../../../domain/scheduling';
+import { aiStatusLabel, categoryLabel, fallbackGuidance, inputTypeLabel, jobStatusLabel, statusLabel, taskTypeLabel, userMessage } from '../../../domain/labels';
 
 type Task = { id: string; title: string; description: string; originalInput: string; deadline: string | null; status: string; aiStatus: string; category: string; taskType: string; revision: number };
 const inputListSchema = z.object({ inputs: z.array(z.object({ id: z.string(), name: z.string(), type: z.enum(['AUDIO', 'IMAGE', 'PDF']), mode: z.literal('mock') })) });
@@ -82,7 +83,7 @@ export default function TaskDetail({ params }: { params: Promise<{ id: string }>
         const deadline = scheduleData.schedule?.deadline;
         if (deadline) setDeadlineTime(tokyoDateTimeInput(deadline));
       }
-    }).catch((cause: unknown) => { if (active) setError(cause instanceof Error ? cause.message : 'エラーが発生しました。'); }).finally(() => { if (active) setLoading(false); }));
+    }).catch((cause: unknown) => { if (active) setError(userMessage(cause, 'タスクを読み込めませんでした。')); }).finally(() => { if (active) setLoading(false); }));
     return () => { active = false; };
   }, [params, waitForGeneration]);
   async function addFiles(event: FormEvent<HTMLFormElement>) {
@@ -101,7 +102,7 @@ export default function TaskDetail({ params }: { params: Promise<{ id: string }>
       setUploadMessage('添付をモック領域へ保存しました。解析は未実行です。');
       form.reset();
     } catch (cause) {
-      setUploadMessage(cause instanceof Error ? cause.message : '添付を保存できませんでした。');
+      setUploadMessage(userMessage(cause, '添付を保存できませんでした。'));
     } finally { setUploading(false); }
   }
   async function prepareTask() {
@@ -113,12 +114,12 @@ export default function TaskDetail({ params }: { params: Promise<{ id: string }>
       const result: unknown = await response.json();
       if (!response.ok) throw new Error('準備ジョブを開始できませんでした。');
       const queued = queuedJobSchema.parse(result);
-      setJobMessage(`準備ジョブ ${queued.job.status}・${queued.label}。ワーカーが処理します。`);
+      setJobMessage(`準備ジョブ ${jobStatusLabel(queued.job.status)}・${queued.label}。ワーカーが処理します。`);
       setTask({ ...task, aiStatus: 'QUEUED' });
       setLatest(null);
       void waitForGeneration(task.id);
     } catch (cause) {
-      setJobMessage(cause instanceof Error ? cause.message : '準備ジョブを開始できませんでした。');
+      setJobMessage(userMessage(cause, '準備ジョブを開始できませんでした。'));
     } finally { setPreparing(false); }
   }
   async function saveSchedule(event: FormEvent<HTMLFormElement>) {
@@ -140,18 +141,18 @@ export default function TaskDetail({ params }: { params: Promise<{ id: string }>
         : '期限なしのため準備をすぐに開始する予定です。通知はモックです。');
       setTask({ ...task, deadline: deadline ? deadline.slice(0, 10) : null });
     } catch (cause) {
-      setScheduleMessage(cause instanceof Error ? cause.message : 'スケジュールを保存できませんでした。');
+      setScheduleMessage(userMessage(cause, 'スケジュールを保存できませんでした。'));
     } finally { setScheduling(false); }
   }
   return <main className="shell"><header className="topbar"><Link href="/" className="back-link">← タスク一覧</Link><span className="mock-label">モック</span></header>
-    {loading ? <p className="state" role="status">読み込み中…</p> : error ? <div className="state error" role="alert">{error}</div> : task ? <article className="detail-card"><p className="eyebrow">タスク詳細</p><h1>{task.title}</h1><p className="detail-label">元の入力</p><p>{task.originalInput || '入力なし'}</p><p className="detail-label">期限</p><p>{task.deadline ?? '期限なし'}</p><p className="detail-label">状態</p><p>{task.status} / AI {task.aiStatus}</p><button className="primary-button" disabled={preparing || generating} onClick={() => void prepareTask()}>{preparing ? '準備中…' : generating ? 'AIが作成中…' : latest ? 'AIでもう一度作る' : 'AI準備を依頼'}</button><p role="status">{jobMessage}</p>{generating ? <p className="state ai-loading" role="status">AIが作成中…（タスク分解とドラフト。1〜2分かかることがあります）</p> : null}{latest ? <AiResult artifact={latest} /> : null}<form className="schedule-form" onSubmit={saveSchedule}><label htmlFor="task-deadline-time">締切日時（日本時間）</label><input id="task-deadline-time" type="datetime-local" value={deadlineTime} onChange={(event) => setDeadlineTime(event.target.value)} /><button className="secondary-button" disabled={scheduling}>{scheduling ? '保存中…' : '期限と通知を設定'}</button><p role="status">{scheduleMessage}</p></form><p className="detail-label">カテゴリ・種別</p><p>{task.category} / {task.taskType}</p><section className="input-section"><h2>関連資料</h2><p>画像・PDF・音声ファイルを添付できます。解析はモックのため行いません。</p><form onSubmit={addFiles}><label htmlFor="task-files">ファイルを選択</label><input id="task-files" name="files" type="file" accept="image/*,application/pdf,audio/*" multiple /><button className="secondary-button" disabled={uploading}>{uploading ? '保存中…' : '添付を保存'}</button></form><p role="status">{uploadMessage}</p><ul>{inputs.map((input) => <li key={input.id}>{input.type}・{input.name}・モック</li>)}</ul></section><p className="detail-label">版履歴</p><p>{latest ? `最新 v${latest.version}・${latest.modeLabel}` : 'ドラフトはまだありません。'}</p><Link className="primary-button link-button" href={`/tasks/${task.id}/review`}>ドラフトレビュー</Link></article> : null}
+    {loading ? <p className="state" role="status">読み込み中…</p> : error ? <div className="state error" role="alert">{error}</div> : task ? <article className="detail-card"><p className="eyebrow">タスク詳細</p><h1>{task.title}</h1><p className="detail-label">元の入力</p><p>{task.originalInput || '入力なし'}</p><p className="detail-label">期限</p><p>{task.deadline ?? '期限なし'}</p><p className="detail-label">状態</p><p>{statusLabel(task.status)} / AI {aiStatusLabel(task.aiStatus)}</p><button className="primary-button" disabled={preparing || generating} onClick={() => void prepareTask()}>{preparing ? '準備中…' : generating ? 'AIが作成中…' : latest ? 'AIでもう一度作る' : 'AI準備を依頼'}</button><p role="status">{jobMessage}</p>{generating ? <p className="state ai-loading" role="status">AIが作成中…（タスク分解とドラフト。1〜2分かかることがあります）</p> : null}{latest ? <AiResult artifact={latest} /> : null}<form className="schedule-form" onSubmit={saveSchedule}><label htmlFor="task-deadline-time">締切日時（日本時間）</label><input id="task-deadline-time" type="datetime-local" value={deadlineTime} onChange={(event) => setDeadlineTime(event.target.value)} /><button className="secondary-button" disabled={scheduling}>{scheduling ? '保存中…' : '期限と通知を設定'}</button><p role="status">{scheduleMessage}</p></form><p className="detail-label">カテゴリ・種別</p><p>{categoryLabel(task.category)} / {taskTypeLabel(task.taskType)}</p><section className="input-section"><h2>関連資料</h2><p>画像・PDF・音声ファイルを添付できます。解析はモックのため行いません。</p><form onSubmit={addFiles}><label htmlFor="task-files">ファイルを選択</label><input id="task-files" name="files" type="file" accept="image/*,application/pdf,audio/*" multiple /><button className="secondary-button" disabled={uploading}>{uploading ? '保存中…' : '添付を保存'}</button></form><p role="status">{uploadMessage}</p><ul>{inputs.map((input) => <li key={input.id}>{inputTypeLabel(input.type)}・{input.name}・モック</li>)}</ul></section><p className="detail-label">版履歴</p><p>{latest ? `最新 v${latest.version}・${latest.modeLabel}` : 'ドラフトはまだありません。'}</p><Link className="primary-button link-button" href={`/tasks/${task.id}/review`}>ドラフトレビュー</Link></article> : null}
   </main>;
 }
 
 function AiResult({ artifact }: { artifact: LatestArtifact }) {
   const fallback = artifact.mode !== 'ai';
   return <section className="ai-result" aria-label="AIの準備結果"><p className={fallback ? 'mode-badge mode-fallback' : 'mode-badge mode-ai'} data-mode={artifact.mode}>{artifact.modeLabel}</p>
-    {fallback && artifact.mode === 'mock_fallback' ? <p className="fallback-note">実AIが使えなかったため、固定のモック内容を表示しています。CLIのログイン状態と設定を確認して「AIでもう一度作る」を押してください。<span className="reason-code">（理由コード {artifact.fallbackReason ?? '不明'}）</span></p> : null}
+    {fallback && artifact.mode === 'mock_fallback' ? <p className="fallback-note">実AIが使えなかったため、固定のモック内容を表示しています。{fallbackGuidance(artifact.version)}<span className="reason-code">（理由コード {artifact.fallbackReason ?? '不明'}）</span></p> : null}
     <h2>タスク分解</h2><ol className="ai-steps">{artifact.plan.steps.map((step, index) => <li key={`${index}-${step}`}>{step}</li>)}</ol>
     <h2>ドラフト v{artifact.version}</h2><pre className="ai-draft">{artifact.content}</pre></section>;
 }
