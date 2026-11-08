@@ -59,7 +59,15 @@ export class BreakdownStore {
         if (prior.content_hash !== hash) throw new BreakdownError('CONFLICT');
         return breakdownSnapshotSchema.parse(JSON.parse(prior.result_json));
       }
-      this.assertBase(taskId, command.baseVersion);
+      if (command.action === 'cancel') {
+        const job = this.snapshot(taskId).jobs.find((item) => item.id === command.jobId);
+        if (!job) throw new BreakdownError('NOT_FOUND');
+        if (job.status === 'SUCCEEDED' || job.status === 'FAILED') throw new BreakdownError('CONFLICT');
+        this.db.prepare("UPDATE breakdown_jobs SET status = 'CANCELLED', updated_at = ? WHERE id = ? AND status IN ('QUEUED', 'RUNNING')")
+          .run(new Date().toISOString(), job.id);
+      } else {
+        this.assertBase(taskId, command.baseVersion);
+      }
       if (command.action === 'regenerate') {
         if (this.snapshot(taskId).jobs.some((job) => job.status === 'QUEUED' || job.status === 'RUNNING')) throw new BreakdownError('CONFLICT');
         const now = new Date().toISOString();
@@ -67,7 +75,7 @@ export class BreakdownStore {
           VALUES (?, ?, 'QUEUED', ?, ?, ?, ?, ?)`).run(randomUUID(), taskId, command.baseVersion, this.taskState(taskId).revision, JSON.stringify(command), now, now);
       } else if (command.action === 'save') {
         this.append(taskId, { kind: 'user', steps: command.steps, mode: null, fallbackReason: null, comment: '', sourceVersion: null });
-      } else {
+      } else if (command.action === 'restore') {
         const source = this.snapshot(taskId).versions.find((v) => v.id === command.sourceVersion);
         if (!source) throw new BreakdownError('NOT_FOUND');
         this.append(taskId, { kind: 'restore', steps: source.steps, mode: source.mode, fallbackReason: source.fallbackReason, comment: '', sourceVersion: source.id });

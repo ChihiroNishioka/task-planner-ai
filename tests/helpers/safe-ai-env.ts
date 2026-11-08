@@ -6,7 +6,7 @@ const AI_ENV_NAMES = ['AI_MODE', 'AI_CLI', 'AI_CLI_PATH', 'AI_CLI_MODEL', 'AI_TI
 /** テストで実行してよいCLIは tests/fixtures の偽CLIと、存在しないことを確認する data/no-such-ai-cli だけ。 */
 function allowedCliPaths(root: string): { fakes: string[]; missing: string } {
   return {
-    fakes: [join(root, 'tests', 'fixtures', 'fake-ai-cli.mjs'), join(root, 'tests', 'fixtures', 'fake-codex-cli.mjs')],
+    fakes: [join(root, 'tests', 'fixtures', 'fake-breakdown-mids-cli.mjs'), join(root, 'tests', 'fixtures', 'fake-ai-cli.mjs'), join(root, 'tests', 'fixtures', 'fake-codex-cli.mjs')],
     missing: join(root, 'data', 'no-such-ai-cli'),
   };
 }
