@@ -23,6 +23,7 @@ export type StoredArtifact = {
   path: string;
   mode: ArtifactMode;
   fallbackReason: string | null;
+  jobId: string | null;
   saveStatus: 'MOCK_SAVED';
   createdAt: string;
   plan: WorkPlan;
@@ -62,6 +63,7 @@ export class PreparationStore {
     this.ensureColumn('artifacts', 'approved_version_id', 'TEXT');
     this.ensureColumn('artifact_versions', 'parent_version_id', 'TEXT');
     this.ensureColumn('artifact_versions', 'fallback_reason', 'TEXT');
+    this.ensureColumn('artifact_versions', 'job_id', 'TEXT');
   }
 
   enqueue(task: Task, operationKey: string = randomUUID()): PreparationJob {
@@ -107,13 +109,13 @@ export class PreparationStore {
     const rows = z.array(z.object({
       id: z.string().uuid(), artifact_id: z.string().uuid(), version_number: z.number(), parent_version_id: z.string().uuid().nullable(), content: z.string(),
       file_name: z.string(), change_summary: z.string(), created_at: z.string(), mode: artifactModeSchema,
-      fallback_reason: z.string().nullable(), save_status: z.literal('MOCK_SAVED'), plan_json: z.string(),
+      fallback_reason: z.string().nullable(), job_id: z.string().nullable(), save_status: z.literal('MOCK_SAVED'), plan_json: z.string(),
     })).parse(this.db.prepare(`SELECT av.* FROM artifact_versions av
       JOIN artifacts a ON a.id = av.artifact_id WHERE a.task_id = ? ORDER BY av.version_number`).all(taskId));
     return rows.map((row) => ({
       id: row.artifact_id, versionId: row.id, parentVersionId: row.parent_version_id,
       taskId, version: row.version_number, path: join(this.artifactDirectory, row.file_name),
-      mode: row.mode, fallbackReason: row.fallback_reason, saveStatus: row.save_status, createdAt: row.created_at,
+      mode: row.mode, fallbackReason: row.fallback_reason, jobId: row.job_id, saveStatus: row.save_status, createdAt: row.created_at,
       plan: workPlanSchema.parse(JSON.parse(row.plan_json)), content: row.content, changeSummary: row.change_summary,
     }));
   }
@@ -165,9 +167,9 @@ export class PreparationStore {
     const transaction = this.db.transaction(() => {
       if (artifactRecord) this.db.prepare('UPDATE artifacts SET current_version = ? WHERE id = ?').run(version, artifactId);
       else this.db.prepare('INSERT INTO artifacts(id, task_id, current_version, created_at) VALUES (?, ?, ?, ?)').run(artifactId, task.id, version, now);
-      this.db.prepare('INSERT INTO artifact_versions(id, artifact_id, version_number, parent_version_id, content, file_name, change_summary, created_at, mode, fallback_reason, save_status, plan_json) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)')
+      this.db.prepare('INSERT INTO artifact_versions(id, artifact_id, version_number, parent_version_id, content, file_name, change_summary, created_at, mode, fallback_reason, job_id, save_status, plan_json) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
         .run(randomUUID(), artifactId, version, generation.markdown, fileName, generation.changeSummary, now,
-          generation.meta?.mode ?? 'mock', generation.meta?.fallbackReason ?? null, 'MOCK_SAVED', JSON.stringify(generation.plan));
+          generation.meta?.mode ?? 'mock', generation.meta?.fallbackReason ?? null, job.id, 'MOCK_SAVED', JSON.stringify(generation.plan));
       this.db.prepare('INSERT OR REPLACE INTO work_plans(task_id, revision, plan_json, created_at) VALUES (?, ?, ?, ?)')
         .run(task.id, task.revision + 1, JSON.stringify(generation.plan), now);
       this.db.prepare("UPDATE preparation_jobs SET status = 'SUCCEEDED', updated_at = ?, error_code = NULL WHERE id = ?").run(now, job.id);

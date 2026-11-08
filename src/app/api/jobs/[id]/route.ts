@@ -6,7 +6,7 @@ export function GET(_request: Request, context: { params: Promise<{ id: string }
   return context.params.then(({ id }) => {
     const job = preparationStore.getJob(id);
     if (!job) return NextResponse.json({ error: 'ジョブが見つかりません。' }, { status: 404 });
-    const artifact = job.status === 'SUCCEEDED' ? preparationStore.listArtifacts(job.taskId).at(-1) : undefined;
+    const artifact = job.status === 'SUCCEEDED' ? preparationStore.listArtifacts(job.taskId).find((item) => item.jobId === job.id) : undefined;
     return NextResponse.json({
       job,
       artifactMode: artifact?.mode ?? null,

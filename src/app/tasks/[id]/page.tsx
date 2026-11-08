@@ -115,6 +115,7 @@ export default function TaskDetail({ params }: { params: Promise<{ id: string }>
       const queued = queuedJobSchema.parse(result);
       setJobMessage(`準備ジョブ ${queued.job.status}・${queued.label}。ワーカーが処理します。`);
       setTask({ ...task, aiStatus: 'QUEUED' });
+      setLatest(null);
       void waitForGeneration(task.id);
     } catch (cause) {
       setJobMessage(cause instanceof Error ? cause.message : '準備ジョブを開始できませんでした。');
@@ -150,7 +151,7 @@ export default function TaskDetail({ params }: { params: Promise<{ id: string }>
 function AiResult({ artifact }: { artifact: LatestArtifact }) {
   const fallback = artifact.mode !== 'ai';
   return <section className="ai-result" aria-label="AIの準備結果"><p className={fallback ? 'mode-badge mode-fallback' : 'mode-badge mode-ai'} data-mode={artifact.mode}>{artifact.modeLabel}</p>
-    {fallback && artifact.mode === 'mock_fallback' ? <p className="fallback-note">実AIが使えなかったため、固定のモック内容を表示しています（理由コード {artifact.fallbackReason ?? '不明'}）。</p> : null}
+    {fallback && artifact.mode === 'mock_fallback' ? <p className="fallback-note">実AIが使えなかったため、固定のモック内容を表示しています。CLIのログイン状態と設定を確認して「AIでもう一度作る」を押してください。<span className="reason-code">（理由コード {artifact.fallbackReason ?? '不明'}）</span></p> : null}
     <h2>タスク分解</h2><ol className="ai-steps">{artifact.plan.steps.map((step, index) => <li key={`${index}-${step}`}>{step}</li>)}</ol>
     <h2>ドラフト v{artifact.version}</h2><pre className="ai-draft">{artifact.content}</pre></section>;
 }

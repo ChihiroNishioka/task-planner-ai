@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { buildChildEnv, buildPrompt, CliAiAdapter, CliAiError, FallbackAiAdapter, runCli, type CliRunner } from '../src/adapters/cli-ai';
+import { buildChildEnv, buildPrompt, CliAiAdapter, CliAiError, FallbackAiAdapter, parseAiOutput, runCli, type CliRunner } from '../src/adapters/cli-ai';
 import { MockAiAdapter } from '../src/adapters/mock-ai';
 import { PreparationStore } from '../src/adapters/preparation-store';
 import { TaskStore } from '../src/adapters/task-store';
@@ -36,7 +36,7 @@ describe('real AI via subscription CLI', () => {
     const job = await preparations.runNext(tasks, new FallbackAiAdapter(new CliAiAdapter(runner), new MockAiAdapter()));
     expect(job?.status).toBe('SUCCEEDED');
     const [artifact] = preparations.listArtifacts(task.id);
-    expect(artifact).toMatchObject({ mode: 'ai', fallbackReason: null });
+    expect(artifact).toMatchObject({ mode: 'ai', fallbackReason: null, jobId: job?.id });
     expect(artifact?.plan.steps).toEqual(JSON.parse(validOutput).steps);
     expect(artifact?.content).toContain('問い合わせ対応の時間を減らす');
     expect(modeLabel('ai', null)).toBe('AI生成');
@@ -87,5 +87,14 @@ describe('real AI via subscription CLI', () => {
     expect(Object.keys(env).sort()).toEqual(['HOME', 'PATH']);
     const echoed = await runCli('', { command: process.execPath, args: ['-e', 'process.stdout.write(String(Object.keys(process.env).includes("GH_TOKEN")))'], timeoutMs: 5_000, env: { PATH: process.env.PATH, GH_TOKEN: 'x' } });
     expect(echoed).toBe('false');
+  });
+});
+
+describe('CLI runner limits', () => {
+  it('rejects oversized output and kills the whole process group on timeout', async () => {
+    expect(() => parseAiOutput(`{"steps":["a","b"],"draftMarkdown":"${'x'.repeat(300_000)}"}`)).toThrow(CliAiError);
+    const started = Date.now();
+    await expect(runCli('', { command: '/bin/sh', args: ['-c', 'sleep 30 & sleep 30'], timeoutMs: 300 })).rejects.toMatchObject({ code: 'CLI_TIMEOUT' });
+    expect(Date.now() - started).toBeLessThan(2_500);
   });
 });

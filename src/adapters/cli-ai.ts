@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
@@ -37,25 +37,36 @@ export type RunCliOptions = { command: string; args: string[]; timeoutMs: number
 /** shell を通さずに CLI を起動し、stdin にプロンプトを渡して stdout を返す。 */
 export function runCli(prompt: string, options: RunCliOptions): Promise<string> {
   return new Promise((resolve, reject) => {
+    // detached で別プロセスグループにし、タイムアウト時は子孫ごと止める。
     const child = spawn(options.command, options.args, {
-      cwd: options.cwd, env: buildChildEnv(options.env ?? process.env) as NodeJS.ProcessEnv, stdio: ['pipe', 'pipe', 'ignore'], shell: false,
+      cwd: options.cwd, env: buildChildEnv(options.env ?? process.env) as NodeJS.ProcessEnv, stdio: ['pipe', 'pipe', 'ignore'], shell: false, detached: true,
     });
     let output = '';
+    let failure: CliAiError | null = null;
     let settled = false;
-    const done = (error: CliAiError | null) => {
+    const settle = (error: CliAiError | null) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      if (error) { child.kill('SIGKILL'); reject(error); } else resolve(output);
+      clearTimeout(forceTimer);
+      if (error) reject(error); else resolve(output);
     };
-    const timer = setTimeout(() => done(new CliAiError('CLI_TIMEOUT')), options.timeoutMs);
+    const stop = (error: CliAiError) => {
+      if (failure || settled) return;
+      failure = error;
+      try { if (child.pid) process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); }
+      // 通常は close を待つ。万一 close が来なくても2秒で打ち切る。
+      forceTimer = setTimeout(() => settle(error), 2_000);
+    };
+    let forceTimer: NodeJS.Timeout | undefined;
+    const timer = setTimeout(() => stop(new CliAiError('CLI_TIMEOUT')), options.timeoutMs);
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', (chunk: string) => {
       output += chunk;
-      if (Buffer.byteLength(output) > MAX_OUTPUT_BYTES) done(new CliAiError('INVALID_OUTPUT'));
+      if (Buffer.byteLength(output) > MAX_OUTPUT_BYTES) stop(new CliAiError('INVALID_OUTPUT'));
     });
-    child.on('error', (error: NodeJS.ErrnoException) => done(new CliAiError(error.code === 'ENOENT' || error.code === 'EACCES' ? 'CLI_NOT_FOUND' : 'CLI_EXIT')));
-    child.on('close', (code) => done(code === 0 ? null : new CliAiError('CLI_EXIT')));
+    child.on('error', (error: NodeJS.ErrnoException) => settle(failure ?? new CliAiError(error.code === 'ENOENT' || error.code === 'EACCES' ? 'CLI_NOT_FOUND' : 'CLI_EXIT')));
+    child.on('close', (code) => settle(failure ?? (code === 0 ? null : new CliAiError('CLI_EXIT'))));
     child.stdin.on('error', () => undefined);
     child.stdin.end(prompt);
   });
@@ -78,7 +89,12 @@ export function createCliRunnerFromEnv(env: Env = process.env): CliRunner {
       if (model) args.push('-m', model);
       args.push('-');
       await runCli(prompt, { command: env.AI_CLI_PATH || 'codex', args, timeoutMs, env, cwd: workdir });
-      return readFileSync(outputFile, 'utf8');
+      try {
+        if (statSync(outputFile).size > MAX_OUTPUT_BYTES) throw new CliAiError('INVALID_OUTPUT');
+        return readFileSync(outputFile, 'utf8');
+      } catch (error) {
+        throw error instanceof CliAiError ? error : new CliAiError('INVALID_OUTPUT');
+      }
     } finally {
       rmSync(workdir, { recursive: true, force: true });
     }
@@ -113,6 +129,7 @@ export function buildPrompt(task: Task): string {
 }
 
 export function parseAiOutput(raw: string): z.infer<typeof aiOutputSchema> {
+  if (Buffer.byteLength(raw) > MAX_OUTPUT_BYTES) throw new CliAiError('INVALID_OUTPUT');
   const start = raw.indexOf('{');
   const end = raw.lastIndexOf('}');
   if (start < 0 || end <= start) throw new CliAiError('INVALID_OUTPUT');
