@@ -1,18 +1,28 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import type { Auth, GoogleAuthProvider } from 'firebase/auth';
+import { isSafeNextPath } from '../../lib/auth-next';
 import styles from './login.module.css';
 
 type FirebaseConfig = { apiKey: string; authDomain: string; projectId: string };
+type FirebaseAuthModule = typeof import('firebase/auth');
+type FirebaseHandle = { auth: Auth; provider: GoogleAuthProvider; authModule: FirebaseAuthModule };
+
+const retryHint = 'もう一度「Googleでログイン」を押してください。';
+const genericError = `ログインを完了できませんでした。${retryHint}`;
 
 export default function LoginForm({ firebaseConfig, nextPath, testMode }: { firebaseConfig: FirebaseConfig; nextPath: string; testMode: boolean }) {
-  const [busy, setBusy] = useState(false);
+  const configured = Boolean(firebaseConfig.apiKey && firebaseConfig.authDomain && firebaseConfig.projectId);
+  // テストモード以外は、SDK の準備とリダイレクト結果の確認が終わるまで読み込み中にする。
+  const [busy, setBusy] = useState(!testMode && configured);
   const [error, setError] = useState('');
   const [email, setEmail] = useState('');
+  const firebaseRef = useRef<FirebaseHandle | null>(null);
   const router = useRouter();
-  const safeNext = nextPath.startsWith('/') && !nextPath.startsWith('//') && !nextPath.startsWith('/\\') ? nextPath : '/';
-  const configurationError = !testMode && (!firebaseConfig.apiKey || !firebaseConfig.authDomain || !firebaseConfig.projectId) ? 'ログインの設定が足りません（管理者向け：FIREBASE_* / SESSION_SECRET / ALLOWED_EMAILS）' : '';
+  const safeNext = isSafeNextPath(nextPath);
+  const configurationError = !testMode && !configured ? 'ログインの設定が足りません（管理者向け：FIREBASE_* / SESSION_SECRET / ALLOWED_EMAILS）' : '';
 
   const sendToken = useCallback(async (token: string, reject: () => Promise<void>) => {
     setBusy(true);
@@ -20,51 +30,60 @@ export default function LoginForm({ firebaseConfig, nextPath, testMode }: { fire
     try {
       const response = await fetch('/api/auth/session', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ idToken: token }) });
       if (!response.ok) {
-        await reject();
-        const body: unknown = await response.json();
-        const message = typeof body === 'object' && body !== null && 'error' in body && typeof body.error === 'string' ? body.error : 'ログイン情報を確認できませんでした。もう一度お試しください。';
-        throw new Error(message);
+        await reject().catch(() => undefined);
+        const body: unknown = await response.json().catch(() => null);
+        const message = typeof body === 'object' && body !== null && 'error' in body && typeof body.error === 'string' ? body.error : `サーバーに接続できませんでした。${retryHint}`;
+        setError(message);
+        setBusy(false);
+        return;
       }
       router.replace(safeNext);
       router.refresh();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : '通信エラーが発生しました。もう一度お試しください。');
-    } finally { setBusy(false); }
+    } catch {
+      setError(`通信エラーが発生しました。${retryHint}`);
+      setBusy(false);
+    }
   }, [router, safeNext]);
 
   useEffect(() => {
-    if (testMode) return;
-    if (!firebaseConfig.apiKey || !firebaseConfig.authDomain || !firebaseConfig.projectId) return;
+    if (testMode || !configured) return;
     let active = true;
-    void import('firebase/app').then(async ({ getApps, initializeApp }) => {
-      const app = getApps()[0] ?? initializeApp(firebaseConfig);
-      const authModule = await import('firebase/auth');
-      const auth = authModule.getAuth(app);
-      const result = await authModule.getRedirectResult(auth);
-      if (active && result?.user) await sendToken(await result.user.getIdToken(), async () => { await authModule.signOut(auth); });
-    }).catch(() => { if (active) setError('ログインを完了できませんでした。もう一度お試しください。'); });
-    return () => { active = false; };
-  }, [firebaseConfig, sendToken, testMode]);
-
-  async function googleLogin() {
-    setBusy(true); setError('');
-    try {
-      const [{ initializeApp, getApps }, authModule] = await Promise.all([import('firebase/app'), import('firebase/auth')]);
+    void (async () => {
+      const [{ getApps, initializeApp }, authModule] = await Promise.all([import('firebase/app'), import('firebase/auth')]);
       const app = getApps()[0] ?? initializeApp(firebaseConfig);
       const auth = authModule.getAuth(app);
       const provider = new authModule.GoogleAuthProvider();
-      try {
-        const result = await authModule.signInWithPopup(auth, provider);
-        await sendToken(await result.user.getIdToken(), async () => { await authModule.signOut(auth); });
-      } catch (cause) {
-        const code = typeof cause === 'object' && cause !== null && 'code' in cause && typeof cause.code === 'string' ? cause.code : '';
-        if (code === 'auth/popup-blocked') { await authModule.signInWithRedirect(auth, provider); return; }
-        if (code === 'auth/popup-closed-by-user') throw new Error('ログイン用のポップアップが閉じられました。');
-        throw cause;
-      }
-    } catch (cause) {
+      // 許可外で断られたあと、別のアカウントを選び直せるようにする。
+      provider.setCustomParameters({ prompt: 'select_account' });
+      firebaseRef.current = { auth, provider, authModule };
+      const result = await authModule.getRedirectResult(auth);
+      if (!active) return;
+      if (result?.user) await sendToken(await result.user.getIdToken(), () => authModule.signOut(auth));
+      else setBusy(false);
+    })().catch((cause: unknown) => {
+      if (!active) return;
       setError(firebaseErrorMessage(cause));
-    } finally { setBusy(false); }
+      setBusy(false);
+    });
+    return () => { active = false; };
+  }, [configured, firebaseConfig, sendToken, testMode]);
+
+  function googleLogin() {
+    const handle = firebaseRef.current;
+    if (!handle) return;
+    setBusy(true);
+    setError('');
+    const { auth, provider, authModule } = handle;
+    // iPhone Safari でブロックされないよう、タップの処理の中で await を挟まずにポップアップを開く。
+    authModule.signInWithPopup(auth, provider)
+      .then(async (result) => sendToken(await result.user.getIdToken(), () => authModule.signOut(auth)))
+      .catch(async (cause: unknown) => {
+        if (errorCode(cause) === 'auth/popup-blocked') {
+          try { await authModule.signInWithRedirect(auth, provider); return; } catch (redirectError) { cause = redirectError; }
+        }
+        setError(firebaseErrorMessage(cause));
+        setBusy(false);
+      });
   }
 
   async function testLogin(event: React.FormEvent<HTMLFormElement>) {
@@ -76,18 +95,21 @@ export default function LoginForm({ firebaseConfig, nextPath, testMode }: { fire
     <h1>Task Planner AI</h1>
     <p>許可されたGoogleアカウントだけ使えます。</p>
     {testMode ? <form className={styles.testForm} onSubmit={(event) => void testLogin(event)}><small>テストモード</small><label htmlFor="test-email">メールアドレス</label><input id="test-email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} required /><button disabled={busy}>{busy ? 'ログインしています…' : 'テストログイン'}</button></form>
-      : <button className={styles.google} disabled={busy || !firebaseConfig.apiKey || !firebaseConfig.authDomain || !firebaseConfig.projectId} onClick={() => void googleLogin()}>{busy ? 'ログインしています…' : 'Googleでログイン'}</button>}
+      : <button className={styles.google} disabled={busy || !configured} onClick={googleLogin}>{busy ? 'ログインしています…' : 'Googleでログイン'}</button>}
     {(error || configurationError) && <p className={styles.error} role="alert" data-app-error="true">{error || configurationError}</p>}
   </section></main>;
 }
 
+function errorCode(cause: unknown): string {
+  return typeof cause === 'object' && cause !== null && 'code' in cause && typeof cause.code === 'string' ? cause.code : '';
+}
+
 function firebaseErrorMessage(cause: unknown): string {
-  if (typeof cause === 'object' && cause !== null && 'code' in cause && typeof cause.code === 'string') {
-    if (cause.code === 'auth/popup-closed-by-user') return 'ログイン用のポップアップが閉じられました。';
-    if (cause.code === 'auth/popup-blocked') return 'ポップアップがブロックされました。ブラウザーの設定を確認してください。';
-    if (cause.code === 'auth/network-request-failed') return '通信エラーが発生しました。もう一度お試しください。';
-    if (cause.code === 'auth/unauthorized-domain') return 'このURLはログインを許可されていません（管理者向け：Firebase の承認済みドメインを確認）。';
-    if (cause.code.startsWith('auth/')) return `Googleログインに失敗しました。もう一度お試しください（${cause.code}）。`;
-  }
-  return cause instanceof Error ? cause.message : '通信エラーが発生しました。もう一度お試しください。';
+  const code = errorCode(cause);
+  if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') return `ログイン用の画面が閉じられました。${retryHint}`;
+  if (code === 'auth/popup-blocked') return 'ポップアップがブロックされました。Safari の「ポップアップブロック」を一時的にオフにしてから、もう一度お試しください。';
+  if (code === 'auth/network-request-failed') return `通信エラーが発生しました。${retryHint}`;
+  if (code === 'auth/unauthorized-domain') return 'このURLはログインを許可されていません（管理者向け：Firebase の承認済みドメインを確認）。';
+  if (code.startsWith('auth/')) return `Googleログインに失敗しました（${code}）。${retryHint}`;
+  return genericError;
 }

@@ -28,7 +28,7 @@ describe('認証境界', () => {
     const keySet = createLocalJWKSet({ keys: [{ ...jwk, kid: 'test-key', alg: 'RS256', use: 'sig' }] });
     const now = Math.floor(Date.now() / 1000);
     const makeToken = (claims: Record<string, unknown>, alg = 'RS256', issuer = 'https://securetoken.google.com/project-a', audience = 'project-a', expiresAt = now + 300) => {
-      const token = new SignJWT({ email: 'owner@example.com', email_verified: true, ...claims }).setProtectedHeader({ alg, kid: 'test-key' }).setIssuer(issuer).setAudience(audience).setSubject('user-1').setIssuedAt(now).setExpirationTime(expiresAt);
+      const token = new SignJWT({ email: 'owner@example.com', email_verified: true, firebase: { sign_in_provider: 'google.com' }, ...claims }).setProtectedHeader({ alg, kid: 'test-key' }).setIssuer(issuer).setAudience(audience).setSubject('user-1').setIssuedAt(now).setExpirationTime(expiresAt);
       return alg === 'HS256' ? token.sign(new TextEncoder().encode('not-a-valid-firebase-key')) : token.sign(privateKey);
     };
     expect(await verifyFirebaseIdToken(await makeToken({}), 'project-a', 'OWNER@example.com', keySet)).toEqual({ ok: true, email: 'owner@example.com' });

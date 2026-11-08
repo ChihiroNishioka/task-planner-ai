@@ -62,6 +62,7 @@ Phase 1から5では、SQLiteのタスク管理、添付ファイルのローカ
 ## 開発段階
 
 Phase 0は設計と環境、Phase 1はタスク管理、Phase 2は入力、Phase 3は準備とドラフト、Phase 4は期限と通知、Phase 5はレビューと再利用、Phase 6は統合検証を扱います。実装と検証の記録は `/workspace/dev/task-planner-ai/.runs/` にあります。
+
 ## Googleログイン
 
 ログインには Firebase Authentication の Google プロバイダーを使います。次の環境変数を設定してください。

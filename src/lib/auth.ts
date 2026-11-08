@@ -8,9 +8,10 @@ export type TokenResult = { ok: true; email: string } | { ok: false; reason: Tok
 export async function verifyFirebaseIdToken(token: string, projectId: string, allowedEmails: string, jwks: JWTVerifyGetKey = firebaseJwks): Promise<TokenResult> {
   try {
     const { payload, protectedHeader } = await jwtVerify(token, jwks, {
-      algorithms: ['RS256'], issuer: `https://securetoken.google.com/${projectId}`, audience: projectId, clockTolerance: 60,
+      algorithms: ['RS256'], issuer: `https://securetoken.google.com/${projectId}`, audience: projectId,
     });
     if (protectedHeader.alg !== 'RS256' || !hasValidTimes(payload) || typeof payload.sub !== 'string' || payload.sub.trim() === '') return { ok: false, reason: 'invalid' };
+    if (!isGoogleSignIn(payload)) return { ok: false, reason: 'invalid' };
     if (typeof payload.email !== 'string' || payload.email_verified !== true) return { ok: false, reason: 'unverified' };
     if (!isAllowedEmail(payload.email, allowedEmails)) return { ok: false, reason: 'not_allowed' };
     return { ok: true, email: payload.email };
@@ -28,9 +29,7 @@ export async function verifyTestIdToken(token: string, allowedEmails: string): P
   return isAllowedEmail(match[1], allowedEmails) ? { ok: true, email: match[1] } : { ok: false, reason: 'not_allowed' };
 }
 
-export function isSafeNextPath(value: string | null | undefined): string {
-  return value?.startsWith('/') && !value.startsWith('//') && !value.startsWith('/\\') ? value : '/';
-}
+export { isSafeNextPath } from './auth-next';
 
 export function validateCsrfRequest(request: Request): boolean {
   const headers = request.headers;
@@ -54,4 +53,9 @@ export function validateCsrfRequest(request: Request): boolean {
 function hasValidTimes(payload: JWTPayload): boolean {
   const now = Math.floor(Date.now() / 1000);
   return typeof payload.exp === 'number' && typeof payload.iat === 'number' && Number.isFinite(payload.exp) && Number.isFinite(payload.iat) && payload.iat <= now + 60;
+}
+
+function isGoogleSignIn(payload: JWTPayload): boolean {
+  const firebase = payload.firebase;
+  return typeof firebase === 'object' && firebase !== null && 'sign_in_provider' in firebase && firebase.sign_in_provider === 'google.com';
 }
