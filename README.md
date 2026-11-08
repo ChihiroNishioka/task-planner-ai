@@ -1,34 +1,45 @@
 # Task Planner AI
 
-個人向けのタスク管理Webアプリです。現在の実装は認証情報なしで動くモックMVPです。Notion、Google Drive、Gmail、Google Calendar、音声認識、AI、通知は実サービスへ接続しません。
+個人向けタスク管理Webアプリです。現在の実装は認証情報なしで動くモックMVPです。Notion、Google Drive、Gmail、Google Calendar、音声認識、AI、通知は実サービスへ接続しません。
 
 ## 起動
 
-Node.js 24 と npm を使います。
+Node.js 24 と npm を用意し、次を実行します。
 
 ```sh
 npm ci
 npm run dev
 ```
 
-ブラウザーで `http://localhost:3000` を開きます。設定値は `.env.example` を参考に `.env.local` へ設定します。秘密値は空のままにし、実値をソースやログへ書かないでください。
+ブラウザーで `http://localhost:3000` を開きます。秘密値は `.env.local` に置き、ソースやログへ書かないでください。別ターミナルでworkerを動かす場合は `timeout 1h npm run worker` を実行します。
 
-## 開発確認
+## テストと確認
 
 ```sh
 npm test
+npm run test:e2e
 npm run lint
 npm run typecheck
+npm run secret-scan
 ```
 
-`npm test` は現在39件のVitest確認を実行します。
+`npm test` は単体/APIテストを実行します。`npm run test:e2e` はローカルNext.jsサーバーとChromiumを使い、iPhone 390x844とPC 1280x800の画面を確認します。Playwrightの画面テストはCIではなくローカルで実行します。
 
-Docker Compose を使う場合は `docker compose up --build` を実行します。Dockerが無い環境ではnpmから起動できます。SQLiteのファイルは `data/task-planner.sqlite` に保存します。
+## Phase 6 の画面
+
+画面テストは一覧、詳細、ドラフト比較、読み込み中、エラー、空状態を両方の表示幅で確認します。画像は [docs/screenshots](docs/screenshots/) にあります。
+
+- iPhone: `iphone-390x844-list.png`、`iphone-390x844-detail.png`、`iphone-390x844-draft-comparison.png`、`iphone-390x844-loading.png`、`iphone-390x844-error.png`、`iphone-390x844-empty.png`
+- PC: `pc-1280x800-list.png`、`pc-1280x800-detail.png`、`pc-1280x800-draft-comparison.png`、`pc-1280x800-loading.png`、`pc-1280x800-error.png`、`pc-1280x800-empty.png`
 
 ## 機能と制約
 
-Phase 1ではタスクをSQLiteに保存し、一覧・登録・詳細・編集・完了・延期・論理削除を使えます。Phase 2では画像、PDF、音声ファイルをタスクに添付し、ローカル領域へ保存できます。ファイル解析と音声文字起こしは未実装で、画面にモックと表示します。Phase 3では永続ジョブが作業計画とMarkdown成果物を作ります。Phase 4では締切日時から前日通知、準備期限、開始時刻をTokyo時間で計算し、workerがアプリ内通知箱へモック通知を記録します。Phase 5では版を保持して修正し、版ごとの評価、最終版承認、タスク完了を別々に操作します。Good成果物は同じカテゴリ内で検索できますが、生成文へ自動適用する品質メモリは未実装です。別ターミナルで `timeout 1h npm run worker` を起動します。`npm run worker -- --once` は期限到来の処理を確認して、ジョブを1件だけ実行します。Calendar参照は空のモックです。実AI、Drive連携、メール通知はありません。API認証はまだありません。`npm run start` はlocalhostにだけbindします。Docker Composeは開発用で、公開環境では使わないでください。将来の接続手順とデータ構造は [ARCHITECTURE.md](ARCHITECTURE.md) と [DATA_MODEL.md](DATA_MODEL.md) を参照してください。
+Phase 1から5では、SQLiteのタスク管理、添付ファイルのローカル保存、永続ジョブによる作業計画とMarkdown成果物、期限に応じた予定とアプリ内モック通知、成果物の版管理・評価・承認を実装しています。Phase 6ではCI、秘密・個人情報スキャン、Playwrightの画面確認を追加しました。
 
-## 開発の段階
+外部サービス、AI生成、音声文字起こし、画像/PDF解析、Calendar参照はモックまたは未実装です。画面とAPIでモックを示し、実サービスの接続成功とは扱いません。メール送信や外部への確定操作は実装していません。API認証、実サービス同期、品質メモリの自動適用も未実装です。
 
-Phase 0 は設計と環境、Phase 1 はタスク管理、Phase 2 は入力、Phase 3 は準備とドラフト、Phase 4 は期限と通知、Phase 5 はレビューと再利用、Phase 6 は統合検証を扱います。完了した範囲と実行した検証は `/workspace/dev/task-planner-ai/.runs/impl-result.md` に記録します。
+保存先にはSQLiteとローカルファイルを使います。PostgreSQLへの移行、バックアップと復元、本番向け認証・アクセス制御は未実装です。Docker構成はありますが、Dockerでのビルドと起動はこのPhaseで確認していません。依存パッケージの監査で報告された脆弱性の更新も未実施です。
+
+## 開発段階
+
+Phase 0は設計と環境、Phase 1はタスク管理、Phase 2は入力、Phase 3は準備とドラフト、Phase 4は期限と通知、Phase 5はレビューと再利用、Phase 6は統合検証を扱います。実装と検証の記録は `/workspace/dev/task-planner-ai/.runs/` にあります。

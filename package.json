@@ -10,7 +10,8 @@
     "test": "vitest run",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "secret-scan": "node scripts/secret-scan.mjs"
+    "secret-scan": "timeout 30s node scripts/secret-scan.mjs",
+    "test:e2e": "playwright test --config=playwright.config.ts"
   },
   "dependencies": {
     "better-sqlite3": "^12.4.1",
@@ -26,6 +27,7 @@
     "@types/react-dom": "^19.2.3",
     "eslint": "^9.39.1",
     "eslint-config-next": "^16.4.5",
+    "@playwright/test": "^1.65.0",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3",
     "vitest": "^4.0.8"

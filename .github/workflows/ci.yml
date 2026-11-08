@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: timeout 5m npm ci
+      - run: timeout 3m npm rebuild better-sqlite3 esbuild
+      - run: timeout 3m npm run lint
+      - run: timeout 3m npm run typecheck
+      - run: timeout 3m npm test
+      - run: timeout 2m npm run secret-scan
