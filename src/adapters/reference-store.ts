@@ -1,12 +1,14 @@
 import { createHash, randomUUID } from 'node:crypto';
 import Database from 'better-sqlite3';
 import { z } from 'zod';
-import { referenceInputSchema, noteEditSchema, referenceSchema, ReferenceError, referenceLimits, type Reference, type FetchResult } from '../domain/references';
+import { ensureColumn } from './schedule-records';
+import { contentHintSchema, fetchFailureReasonSchema, referenceInputSchema, noteEditSchema, referenceSchema, ReferenceError, referenceLimits, type Reference, type FetchResult } from '../domain/references';
 
 const rowSchema = z.object({
   id: z.string(), task_id: z.string(), kind: z.enum(['NOTE', 'URL']), title: z.string(), body: z.string(),
   url: z.string().nullable(), final_url: z.string().nullable(), fetch_status: z.string().nullable(),
   fetch_error_code: z.string().nullable(), fetch_mode: z.string().nullable(), fetched_at: z.string().nullable(),
+  fetch_failure_reason: z.string().nullable(), content_hint: z.string().nullable(), fetch_detail_revision: z.number().nullable(),
   content_type: z.string().nullable(), truncated: z.number(), revision: z.number(), created_at: z.string(), updated_at: z.string(),
 });
 
@@ -24,6 +26,9 @@ export class ReferenceStore {
       revision INTEGER NOT NULL DEFAULT 1, operation_key TEXT NOT NULL, request_hash TEXT NOT NULL,
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(task_id, operation_key)
     ); CREATE INDEX IF NOT EXISTS task_references_task ON task_references(task_id, created_at);`);
+    for(const [name,declaration] of [['fetch_failure_reason','TEXT'],['content_hint','TEXT'],['fetch_detail_revision','INTEGER'],['fetch_http_status','INTEGER']]) {
+      ensureColumn(this.db,'task_references',name,declaration);
+    }
   }
   add(taskId: string, raw: unknown, operationKey: string = randomUUID()): Reference {
     const input = referenceInputSchema.parse(raw);
@@ -78,7 +83,7 @@ export class ReferenceStore {
       if (item.fetchStatus === 'FETCHING') throw new ReferenceError(409, '取得中です。しばらく待ってください。');
       const attempt = randomUUID();
       const now = new Date().toISOString();
-      this.db.prepare("UPDATE task_references SET fetch_status='FETCHING',fetch_error_code=NULL,fetch_attempt_id=?,fetch_started_at=?,fetch_mode=?,updated_at=?,revision=revision+1 WHERE task_id=? AND id=?")
+      this.db.prepare("UPDATE task_references SET fetch_status='FETCHING',content_hint=CASE WHEN fetch_detail_revision=revision THEN content_hint ELSE NULL END,fetch_error_code=NULL,fetch_failure_reason=NULL,fetch_http_status=NULL,fetch_detail_revision=revision+1,fetch_attempt_id=?,fetch_started_at=?,fetch_mode=?,updated_at=?,revision=revision+1 WHERE task_id=? AND id=?")
         .run(attempt, now, mode, now, taskId, id);
       return attempt;
     }).immediate();
@@ -86,18 +91,18 @@ export class ReferenceStore {
   finishFetch(taskId: string, id: string, attempt: string, result: FetchResult): void {
     const now = new Date().toISOString();
     if (result.ok) {
-      this.db.prepare(`UPDATE task_references SET title=?,body=?,final_url=?,content_type=?,truncated=?,fetch_status='SUCCEEDED',fetch_error_code=NULL,fetched_at=?,updated_at=?,revision=revision+1
+      this.db.prepare(`UPDATE task_references SET title=?,body=?,final_url=?,content_type=?,truncated=?,content_hint=?,fetch_failure_reason=NULL,fetch_http_status=NULL,fetch_detail_revision=revision+1,fetch_status='SUCCEEDED',fetch_error_code=NULL,fetched_at=?,updated_at=?,revision=revision+1
         WHERE task_id=? AND id=? AND fetch_attempt_id=? AND fetch_status='FETCHING'`)
-        .run(result.title, result.body, result.finalUrl, result.contentType, Number(result.truncated), now, now, taskId, id, attempt);
+        .run(result.title, result.body, result.finalUrl, result.contentType, Number(result.truncated), result.contentHint??null, now, now, taskId, id, attempt);
     } else {
-      this.db.prepare(`UPDATE task_references SET fetch_status='FAILED',fetch_error_code=?,updated_at=?,revision=revision+1 WHERE task_id=? AND id=? AND fetch_attempt_id=? AND fetch_status='FETCHING'`)
-        .run(result.code, now, taskId, id, attempt);
+      this.db.prepare(`UPDATE task_references SET fetch_status='FAILED',content_hint=CASE WHEN fetch_detail_revision=revision THEN content_hint ELSE NULL END,fetch_error_code=?,fetch_failure_reason=?,fetch_http_status=?,fetch_detail_revision=revision+1,updated_at=?,revision=revision+1 WHERE task_id=? AND id=? AND fetch_attempt_id=? AND fetch_status='FETCHING'`)
+        .run(result.code, result.reason??null, result.httpStatus??null, now, taskId, id, attempt);
     }
   }
   hasOperation(taskId: string, key: string): boolean { return Boolean(this.db.prepare('SELECT 1 FROM task_references WHERE task_id=? AND operation_key=?').get(taskId, key)); }
   close(): void { this.db.close(); }
   private recover(taskId: string): void {
-    this.db.prepare("UPDATE task_references SET fetch_status='FAILED',fetch_error_code='INTERRUPTED',fetch_attempt_id=NULL,revision=revision+1 WHERE task_id=? AND fetch_status='FETCHING' AND fetch_started_at < ?")
+    this.db.prepare("UPDATE task_references SET fetch_status='FAILED',content_hint=CASE WHEN fetch_detail_revision=revision THEN content_hint ELSE NULL END,fetch_error_code='INTERRUPTED',fetch_failure_reason=NULL,fetch_http_status=NULL,fetch_detail_revision=revision+1,fetch_attempt_id=NULL,revision=revision+1 WHERE task_id=? AND fetch_status='FETCHING' AND fetch_started_at < ?")
       .run(taskId, new Date(Date.now() - 30_000).toISOString());
   }
 }
@@ -105,5 +110,7 @@ function fromRow(raw: unknown): Reference {
   const row = rowSchema.parse(raw);
   return referenceSchema.parse({ id: row.id, taskId: row.task_id, kind: row.kind, title: row.title, body: row.body, revision: row.revision,
     createdAt: row.created_at, updatedAt: row.updated_at, url: row.url, finalUrl: row.final_url, fetchStatus: row.fetch_status,
+    fetchFailureReason: row.fetch_detail_revision===row.revision ? fetchFailureReasonSchema.nullable().catch(null).parse(row.fetch_failure_reason) : null,
+    contentHint: row.fetch_detail_revision===row.revision ? contentHintSchema.nullable().catch(null).parse(row.content_hint) : null,
     fetchErrorCode: row.fetch_error_code, fetchMode: row.fetch_mode, fetchedAt: row.fetched_at, contentType: row.content_type, truncated: Boolean(row.truncated) });
 }

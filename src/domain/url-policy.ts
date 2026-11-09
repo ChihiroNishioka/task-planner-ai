@@ -11,11 +11,15 @@ export function isBlockedAddress(address: string): boolean {
   return family === 4 ? blocked4.check(address,'ipv4') : family === 6 ? !public6.check(address,'ipv6') || blocked6.check(address,'ipv6') : true;
 }
 export function validateUrl(input: string): URL {
-  if (input.length > 2048) throw new Error('BLOCKED_URL');
-  const url = new URL(input);
-  if (!['http:','https:'].includes(url.protocol) || url.username || url.password || (url.port && !['80','443'].includes(url.port))) throw new Error('BLOCKED_URL');
+  if (input.length > 2048) throw new UrlPolicyError('BLOCKED_URL_FORM');
+  let url:URL;try{url=new URL(input);}catch{throw new UrlPolicyError('BLOCKED_URL_FORM');}
+  if (!['http:','https:'].includes(url.protocol) || url.username || url.password || (url.port && !['80','443'].includes(url.port))) throw new UrlPolicyError('BLOCKED_URL_FORM');
   const hostname = url.hostname.replace(/^\[|\]$/g,'').replace(/\.$/,'').toLowerCase();
-  if (isIP(hostname)) { if(isBlockedAddress(hostname)) throw new Error('BLOCKED_URL'); }
-  else if (!hostname.includes('.') || ['localhost','local','internal','intranet','lan','home','corp','home.arpa','ts.net','metadata.goog'].some(name=>hostname===name || hostname.endsWith(`.${name}`))) throw new Error('BLOCKED_URL');
+  if (isIP(hostname)) { if(isBlockedAddress(hostname)) throw new UrlPolicyError('BLOCKED_ADDRESS'); }
+  else if (!hostname.includes('.') || ['localhost','local','internal','intranet','lan','home','corp','home.arpa','ts.net','metadata.goog'].some(name=>hostname===name || hostname.endsWith(`.${name}`))) throw new UrlPolicyError('BLOCKED_ADDRESS');
   return url;
+}
+
+export class UrlPolicyError extends Error {
+  constructor(readonly reason:'BLOCKED_ADDRESS'|'BLOCKED_URL_FORM') { super('BLOCKED_URL'); }
 }

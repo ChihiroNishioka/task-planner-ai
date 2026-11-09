@@ -75,7 +75,7 @@ describe('通常Shell専用の局所ソケット検証', () => {
       const resolve = vi.fn<Resolve>(async () => ['127.0.0.1']);
       resolve.mockImplementationOnce(async () => ['93.184.215.14']);
       const dial = await localDial(() => firstPort);
-      expect(await fetchReference('http://rebind.example.com/', { resolve, dial })).toEqual({ ok: false, code: 'BLOCKED_URL' });
+      expect(await fetchReference('http://rebind.example.com/', { resolve, dial })).toEqual({ ok: false, code: 'BLOCKED_URL', reason: 'BLOCKED_ADDRESS' });
       expect(resolve).toHaveBeenCalledTimes(2);
       expect(dial).toHaveBeenCalledTimes(1);
       expect(requests).toBe(1);

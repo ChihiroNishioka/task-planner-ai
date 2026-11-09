@@ -8,7 +8,7 @@ import { TextArea } from '@astryxdesign/core/TextArea';
 import { InternationalizationProvider } from '@astryxdesign/core/i18n';
 import { ThemeContext } from '@astryxdesign/core/theme';
 import { neutralTheme } from '@astryxdesign/theme-neutral/built';
-import { fetchErrors, referenceLimits, referenceSchema, type Reference } from '../../../domain/references';
+import { fetchErrorMessage, getReferenceCompleteness, getReferenceCompletenessMessage, referenceLimits, referenceSchema, type Reference } from '../../../domain/references';
 
 const listSchema = z.object({ references: z.array(referenceSchema) });
 const savedSchema = z.object({ reference: referenceSchema });
@@ -29,7 +29,9 @@ export function ReferencePanel({ taskId, children }: { taskId: string; children:
   const [loadError, setLoadError] = useState('');
   const [error, setError] = useState('');
   const [noteError, setNoteError] = useState('');
-  const [message, setMessage] = useState('');
+  const [notice, setNotice] = useState<{ tab: Tab; text: string }>({ tab: 'ファイル', text: '' });
+  const message = notice.tab === tab ? notice.text : '';
+  function setMessage(text: string) { setNotice({ tab, text }); }
   const [pending, setPending] = useState(false);
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
@@ -90,6 +92,7 @@ export function ReferencePanel({ taskId, children }: { taskId: string; children:
     return () => { cancelled = true; clearTimeout(timer); activeLoad.current += 1; };
   }, [load]);
 
+  function selectTab(selected: Tab) { if (selected !== tab) { setMessage(''); setTab(selected); } }
   function resetNote() { saveOperations.current.delete('note'); setTitle(''); setBody(''); setEditor({ kind: 'new' }); noteConflictRef.current = null; setNoteConflict(null); setNoteError(''); }
   async function mutate(path: string, method: string, data?: unknown, operation?: string) {
     activeLoad.current += 1;
@@ -100,7 +103,8 @@ export function ReferencePanel({ taskId, children }: { taskId: string; children:
     const key = previous?.signature === signature ? previous.key : crypto.randomUUID();
     if (operation) saveOperations.current.set(operation, { signature, key });
     const showError = operation === 'note' ? setNoteError : setError;
-    setPending(true); showError(''); setMessage('');
+    const fetchingUrl = operation === 'url' || path.endsWith('/refetch');
+    setPending(true); showError(''); setMessage(fetchingUrl ? `ページを取得しています。最大${referenceLimits.timeoutMs / 1000}秒ほどかかることがあります。` : '');
     try {
       const response = await fetch(path, {
         method, headers: { 'content-type': 'application/json', 'idempotency-key': key },
@@ -125,16 +129,22 @@ export function ReferencePanel({ taskId, children }: { taskId: string; children:
         }
       }
       if (!response.ok) throw new Error(apiErrors[response.status] ?? '資料を保存できませんでした。もう一度お試しください。');
+      if (fetchingUrl) setMessage('結果を確認しています。一覧を確認してください。');
       if (response.status === 204) {
         setReferences(current => current.filter(item => `${endpoint}/${item.id}` !== path));
       } else {
         const saved = savedSchema.parse(await response.json()).reference;
         setReferences(current => current.some(item => item.id === saved.id) ? current.map(item => item.id === saved.id ? saved : item) : [...current, saved]);
+        if (fetchingUrl && saved.kind === 'URL') {
+          if (saved.fetchStatus === 'SUCCEEDED') setMessage(`ページを取り込みました。${getReferenceCompletenessMessage(saved) ?? ''}`);
+          else if (saved.fetchStatus === 'FAILED' && saved.fetchErrorCode) setMessage(`${operation === 'url' ? 'URLは保存しました。' : '再取得できませんでした。'}${saved.fetchErrorCode ? fetchErrorMessage(saved.fetchErrorCode, saved.fetchFailureReason) : ''}`);
+        }
       }
       if (operation) saveOperations.current.delete(operation);
       await load();
       return true;
     } catch (cause) {
+      setMessage('');
       showError(cause instanceof Error && (Object.values(apiErrors).includes(cause.message) || cause.message.startsWith('資料を保存')) ? cause.message : '資料を保存できませんでした。もう一度お試しください。');
       return false;
     } finally { mutating.current = false; setPending(false); }
@@ -148,7 +158,7 @@ export function ReferencePanel({ taskId, children }: { taskId: string; children:
   }
   async function saveUrl(event: FormEvent) {
     event.preventDefault();
-    if (await mutate(endpoint, 'POST', { kind: 'URL', url }, 'url')) { setUrl(''); setMessage('URLを保存しました。取得結果を確認してください。'); }
+    if (await mutate(endpoint, 'POST', { kind: 'URL', url }, 'url')) setUrl('');
   }
   async function remove(item: Reference) {
     if (!window.confirm('この資料を削除しますか？')) return;
@@ -159,13 +169,13 @@ export function ReferencePanel({ taskId, children }: { taskId: string; children:
   }
   return <InternationalizationProvider locale="ja" overrides={{ ja: { "@astryx.field.required": "必須" } }}><ThemeContext.Provider value={{ theme: neutralTheme, mode: 'light' }}><section data-astryx-theme="neutral" data-theme="light" className="input-section reference-panel" data-reference-panel aria-label="関連資料">
     <h2>関連資料</h2>
-    <TabList className="reference-tabs" role="tablist" aria-label="資料の種類" value={tab} onChange={value => { const selected = tabs.find(name => name === value); if (selected) setTab(selected); }} layout="fill" size="lg">{tabs.map((name, index) => <Tab key={name} id={`ref-tab-${index}`} value={name} label={name} panelId={`ref-panel-${index}`} onFocus={() => setTab(name)} />)}</TabList>
+    <TabList className="reference-tabs" role="tablist" aria-label="資料の種類" value={tab} onChange={value => { const selected = tabs.find(name => name === value); if (selected) selectTab(selected); }} layout="fill" size="lg">{tabs.map((name, index) => <Tab key={name} id={`ref-tab-${index}`} value={name} label={name} panelId={`ref-panel-${index}`} onFocus={() => selectTab(name)} />)}</TabList>
     <div id="ref-panel-0" role="tabpanel" aria-labelledby="ref-tab-0" hidden={tab !== 'ファイル'}>{children}</div>
     {loading ? <p role="status">資料を読み込み中…</p> : null}
     {loadError ? <div className="error" data-ref-error role="alert"><p>{loadError}</p><button type="button" className="secondary-button" disabled={loading || pending} onClick={() => { setLoading(true); void load(); }}>資料を再読み込み</button></div> : null}
     {error ? <p className="error" data-ref-error role="alert">{error}</p> : null}
     {noteError ? <p className="error" data-ref-error role="alert">{noteError}</p> : null}
-    <p role="status" aria-live="polite">{message}</p>
+    <p role="status" aria-live="polite" data-reference-message>{message}</p>
     <div id="ref-panel-1" role="tabpanel" aria-labelledby="ref-tab-1" hidden={tab !== 'メモ'}>
       {latestNote ? <section ref={noteComparisonRef} tabIndex={-1} role="region" aria-label="最新のメモ" className="input-section reference-list"><h3>最新のメモ</h3><h4 className="reference-body">{latestNote.title || '題名のないメモ'}</h4><p className="reference-body">{latestNote.body}</p><div className="reference-actions"><button type="button" className="secondary-button" disabled={pending} onClick={() => {
         saveOperations.current.delete('note');
@@ -182,16 +192,29 @@ export function ReferencePanel({ taskId, children }: { taskId: string; children:
     <div id="ref-panel-2" role="tabpanel" aria-labelledby="ref-tab-2" hidden={tab !== 'URL'}>
       <form onSubmit={saveUrl} className="reference-form"><TextInput controlClassName="reference-input-control" id="reference-url" label="関連するURL" type="url" isRequired inputMode="url" value={url} placeholder="https://example.com/" onChange={value => { const next = value.slice(0, referenceLimits.url); if (next !== url) saveOperations.current.delete('url'); setUrl(next); }} isDisabled={pending} /><p>公開ページのタイトルと本文をサーバーで取得します。取得に失敗してもURLは保存されます。</p><button className="secondary-button" disabled={pending || loading || !!loadError || !url.trim()}>{pending ? '取得中…' : 'URLを追加'}</button></form>
       {!loading && !loadError && !references.some(item => item.kind === 'URL') ? <p>URLはまだありません。</p> : null}
-      <ul className="reference-list">{references.map(item => item.kind === 'URL' ? <li key={item.id} data-reference-kind="URL"><h3>{item.title || 'URL資料'}</h3><SafeLink url={item.url} /><p className="reference-status">{item.fetchStatus === 'SUCCEEDED' ? '取得済み' : item.fetchStatus === 'FETCHING' ? '取得中' : '取得失敗'}・{item.fetchMode === 'fixture' ? 'テスト用データ' : item.fetchStatus === 'SUCCEEDED' ? '実サイトから取得' : '実サイト取得モード'}</p>{item.fetchErrorCode ? <p className="error">{fetchErrors[item.fetchErrorCode]}</p> : null}{item.fetchStatus !== 'SUCCEEDED' && item.body ? <p>以前に取得した本文です。最新の取得は完了していないためAI入力には使用しません。</p> : null}{item.truncated ? <p>本文の一部のみ保存</p> : null}{item.body ? <details><summary>本文を確認</summary><p className="reference-body">{item.body}</p></details> : null}<div className="reference-actions"><button type="button" className="secondary-button" disabled={pending || item.fetchStatus === 'FETCHING'} onClick={() => void mutate(`${endpoint}/${item.id}/refetch`, 'POST')}>再取得</button><button type="button" className="secondary-button" disabled={pending} onClick={() => void remove(item)}>削除</button></div></li> : null)}</ul>
+      <ul className="reference-list">{references.map(item => {
+        if (item.kind !== 'URL') return null;
+        const completeness = item.body ? getReferenceCompleteness(item) : null;
+        return <li key={item.id} data-reference-kind="URL">
+          <h3>{item.title || 'URL資料'}</h3>
+          <SafeLink url={item.url} blocked={item.fetchStatus === 'FAILED' && item.fetchErrorCode === 'BLOCKED_URL'} />
+          <p className="reference-status">{item.fetchStatus === 'SUCCEEDED' ? '取得済み' : item.fetchStatus === 'FETCHING' ? '取得中' : '取得失敗'}・{item.fetchMode === 'fixture' ? 'テスト用データ' : item.fetchStatus === 'SUCCEEDED' ? '実サイトから取得' : '実サイト取得モード'}</p>
+          {item.fetchStatus === 'FAILED' && item.fetchErrorCode ? <p className="error" data-reference-failure={item.fetchFailureReason ?? item.fetchErrorCode}>{fetchErrorMessage(item.fetchErrorCode, item.fetchFailureReason)}</p> : null}
+          {item.fetchStatus !== 'SUCCEEDED' && item.body ? <p>以前に取得した本文です。最新の取得は完了していないためAI入力には使用しません。</p> : null}
+          {completeness ? <p className="reference-completeness" data-reference-completeness={completeness}>{getReferenceCompletenessMessage(item)}</p> : null}
+          {item.body ? <details><summary>本文を確認</summary><p className="reference-body">{item.body}</p></details> : null}
+          <div className="reference-actions"><button type="button" className="secondary-button" aria-label={`${item.title || item.url}を再取得`} data-reference-action="refetch" disabled={pending || item.fetchStatus === 'FETCHING'} onClick={() => void mutate(`${endpoint}/${item.id}/refetch`, 'POST')}>再取得</button><button type="button" className="secondary-button" aria-label={`${item.title || item.url}を削除`} data-reference-action="delete" disabled={pending} onClick={() => void remove(item)}>削除</button></div>
+        </li>;
+      })}</ul>
     </div>
   </section></ThemeContext.Provider></InternationalizationProvider>;
 }
 
-function SafeLink({ url }: { url: string }) {
+function SafeLink({ url, blocked }: { url: string; blocked: boolean }) {
   let safe = false;
   try {
     const parsed = new URL(url);
     safe = ['http:', 'https:'].includes(parsed.protocol) && !parsed.username && !parsed.password;
   } catch { safe = false; }
-  return safe ? <a href={url} target="_blank" rel="noopener noreferrer nofollow">{url}</a> : <span>{url}</span>;
+  return safe && !blocked ? <a className="reference-url" title={url} href={url} target="_blank" rel="noopener noreferrer nofollow">{url}</a> : <span className="reference-url" title={url}>{url}</span>;
 }

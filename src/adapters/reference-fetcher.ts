@@ -5,16 +5,18 @@ import { connect as tlsConnect, checkServerIdentity } from 'node:tls';
 import { Duplex } from 'node:stream';
 import { createGunzip } from 'node:zlib';
 import { decodeText, extractText } from '../domain/html-text';
-import { isBlockedAddress, validateUrl } from '../domain/url-policy';
-import { fetchErrors, referenceLimits, type FetchErrorCode, type FetchResult } from '../domain/references';
+import { isBlockedAddress, validateUrl, UrlPolicyError } from '../domain/url-policy';
+import { referenceLimits, referenceUserAgent, type FetchErrorCode, type FetchResult, type FetchFailureReason } from '../domain/references';
+
+import { createDohResolver, DnsFailure, parseReferenceDnsConfig, type ReferenceDnsEnv } from './reference-doh';
 
 export type DialTarget = { ip:string; host:string; port:number; tls:boolean; servername?:string; rejectUnauthorized:true; verifyHostname:string };
 export type Dial = (target:DialTarget,signal:AbortSignal)=>Duplex;
 export type Resolve = (hostname:string,signal:AbortSignal)=>Promise<string[]>;
 export type FetchOptions = { resolve?:Resolve; dial?:Dial; timeoutMs?:number };
 type DnsResolver = { resolve4:(hostname:string)=>Promise<string[]>; resolve6:(hostname:string)=>Promise<string[]>; cancel:()=>void };
-class FetchFailure extends Error { constructor(readonly code:FetchErrorCode){super(code);} }
-function fail(code:FetchErrorCode):never {throw new FetchFailure(code);}
+class FetchFailure extends Error { constructor(readonly code:FetchErrorCode,readonly reason?:FetchFailureReason,readonly httpStatus?:number){super(code);} }
+function fail(code:FetchErrorCode,reason?:FetchFailureReason,httpStatus?:number):never {throw new FetchFailure(code,reason,httpStatus);}
 function errorCode(error:unknown):FetchErrorCode {
   if(error instanceof FetchFailure)return error.code;
   if(error instanceof Error && error.message==='DECODE_FAILED')return 'DECODE_FAILED';
@@ -28,19 +30,21 @@ export async function resolveAll(hostname:string, signal:AbortSignal, resolver:D
     const addresses:string[]=[];
     for(const family of families) {
       if(family.status==='fulfilled')addresses.push(...family.value);
-      else { const reason:unknown=family.reason; if(!(reason instanceof Error && 'code' in reason && ['ENODATA','ENOTFOUND'].includes(String(reason.code))))fail('DNS_FAILED'); }
+      else { const reason:unknown=family.reason; if(!(reason instanceof Error && 'code' in reason && ['ENODATA','ENOTFOUND'].includes(String(reason.code))))fail('DNS_FAILED','DNS_UNAVAILABLE'); }
     }
-    if(!addresses.length)fail('DNS_FAILED');
+    if(!addresses.length)fail('DNS_FAILED','DNS_NOT_FOUND');
     return addresses;
   } finally {clearTimeout(timer);signal.removeEventListener('abort',cancel);}
 }
 export const defaultDial:Dial = (target,signal)=> {
   const socket=target.tls ? tlsConnect({host:target.ip,port:target.port,servername:target.servername,rejectUnauthorized:true,ALPNProtocols:['http/1.1'],checkServerIdentity:(_host,cert)=>checkServerIdentity(target.verifyHostname,cert)}) : connect({host:target.ip,port:target.port});
+  const timer=setTimeout(()=>socket.destroy(new FetchFailure('NETWORK_ERROR')),5000);
+  socket.once(target.tls?'secureConnect':'connect',()=>clearTimeout(timer));socket.once('close',()=>clearTimeout(timer));
   const abort=()=>socket.destroy(new FetchFailure('TIMEOUT'));signal.addEventListener('abort',abort,{once:true});socket.once('close',()=>signal.removeEventListener('abort',abort));return socket;
 };
 function open(url:URL,target:DialTarget,signal:AbortSignal,dial:Dial):Promise<IncomingMessage> {
   return new Promise((resolve,reject)=> {
-    const req=request({method:'GET',hostname:target.ip,port:target.port,path:url.pathname+url.search,headers:{Host:url.host,'User-Agent':'TaskPlannerAI-ReferenceFetcher/1.0',Accept:'text/html,text/plain','Accept-Encoding':'gzip',Connection:'close'},createConnection:()=>dial(target,signal),signal},resolve);
+    const req=request({method:'GET',hostname:target.ip,port:target.port,path:url.pathname+url.search,headers:{Host:url.host,'User-Agent':referenceUserAgent,Accept:'text/html,text/plain','Accept-Encoding':'gzip',Connection:'close'},createConnection:()=>dial(target,signal),signal},resolve);
     req.once('error',reject);req.end();
   });
 }
@@ -75,13 +79,13 @@ export async function fetchReference(input:string, options:FetchOptions={}):Prom
     try {
       let next=input;
       for(let hop=0;hop<=5;hop++) {
-        let url:URL; try{url=validateUrl(next);}catch{fail('BLOCKED_URL');}
+        let url:URL; try{url=validateUrl(next);}catch(error){fail('BLOCKED_URL',error instanceof UrlPolicyError?error.reason:'BLOCKED_URL_FORM');}
         const hostname=url.hostname.replace(/^\[|\]$/g,'').replace(/\.$/,'');
         let addresses:string[];
         if(isIP(hostname))addresses=[hostname];
-        else {try{addresses=await (options.resolve??resolveAll)(hostname,signal);}catch{fail('DNS_FAILED');}}
-        if(!addresses.length)fail('DNS_FAILED');
-        if(addresses.some(isBlockedAddress))fail('BLOCKED_URL');
+        else {try{addresses=await (options.resolve??resolveAll)(hostname,signal);}catch(error){fail('DNS_FAILED',error instanceof DnsFailure||error instanceof FetchFailure?error.reason??'DNS_UNAVAILABLE':'DNS_UNAVAILABLE');}}
+        if(!addresses.length)fail('DNS_FAILED','DNS_NOT_FOUND');
+        if(addresses.some(isBlockedAddress))fail('BLOCKED_URL','BLOCKED_ADDRESS');
         if(signal.aborted)fail('TIMEOUT');
         addresses.sort((a,b)=>isIP(a)-isIP(b));
         let response:IncomingMessage | undefined;
@@ -93,11 +97,11 @@ export async function fetchReference(input:string, options:FetchOptions={}):Prom
         const status=response.statusCode??0;
         if([301,302,303,307,308].includes(status)) {
           const location=response.headers.location;response.destroy();
-          if(!location)fail('HTTP_ERROR');
+          if(!location)fail('HTTP_ERROR','HTTP_OTHER',status);
           if(hop===5)fail('TOO_MANY_REDIRECTS');
-          try {next=new URL(location,url).href;}catch{fail('BLOCKED_URL');}continue;
+          try {next=new URL(location,url).href;}catch{fail('BLOCKED_URL','BLOCKED_URL_FORM');}continue;
         }
-        if(status<200||status>=300){response.destroy();fail('HTTP_ERROR');}
+        if(status<200||status>=300){response.destroy();fail('HTTP_ERROR',[401,403,407,429,451].includes(status)?'HTTP_REFUSED':[404,410].includes(status)?'HTTP_NOT_FOUND':status>=500&&status<=599?'HTTP_SERVER':'HTTP_OTHER',status);}
         const rawType=response.headers['content-type']??'';const contentType=rawType.split(';')[0].trim().toLowerCase();
         if(!['text/html','text/plain'].includes(contentType)){response.destroy();fail('UNSUPPORTED_TYPE');}
         const bytes=await readBody(response);const text=decodeText(bytes,rawType);const result=extractText(text,contentType,hostname);
@@ -105,12 +109,13 @@ export async function fetchReference(input:string, options:FetchOptions={}):Prom
         return {ok:true,...result,contentType,finalUrl:url.href};
       }
       return {ok:false,code:'TOO_MANY_REDIRECTS'};
-    }catch(error){return {ok:false,code:signal.aborted?'TIMEOUT':errorCode(error)};}
+    }catch(error){if(signal.aborted)return {ok:false,code:'TIMEOUT'};return {ok:false,code:errorCode(error),...(error instanceof FetchFailure&&error.reason?{reason:error.reason}:{}),...(error instanceof FetchFailure&&error.httpStatus!==undefined?{httpStatus:error.httpStatus}:{})};}
   };
   try{return await Promise.race([run(),timeout]);}finally{clearTimeout(timer);controller.abort();}
 }
 
-export function createReferenceFetcherFromEnv(env:{NODE_ENV?:string;REFERENCE_FETCH_MODE?:string}=process.env):{mode:'live'|'fixture';fetch:(url:string)=>Promise<FetchResult>} {
+export function createReferenceFetcherFromEnv(env:{NODE_ENV?:string;REFERENCE_FETCH_MODE?:string}&ReferenceDnsEnv=process.env):{mode:'live'|'fixture';fetch:(url:string)=>Promise<FetchResult>} {
+  const dnsConfig=parseReferenceDnsConfig(env);
   const mode=env.REFERENCE_FETCH_MODE??'live';
   if(!['live','fixture','off'].includes(mode))throw new Error('URL取得モードが不正です');
   if(mode==='fixture' && env.NODE_ENV==='production')throw new Error('本番ではテスト用URL取得を使えません');
@@ -119,7 +124,8 @@ export function createReferenceFetcherFromEnv(env:{NODE_ENV?:string;REFERENCE_FE
     resolve:async hostname=>hostname==='example.com'?['93.184.215.14']:hostname==='private.example.com'?['10.0.0.1']:[],
     dial:(target,signal)=> {if(target.verifyHostname!=='example.com')fail('NETWORK_ERROR');const socket=connect({host:'127.0.0.1',port:3351});const abort=()=>socket.destroy();signal.addEventListener('abort',abort,{once:true});socket.once('close',()=>signal.removeEventListener('abort',abort));return socket;},
   })};
-  return {mode:'live',fetch:url=>fetchReference(url)};
+  const resolve=dnsConfig.mode==='doh'?createDohResolver(dnsConfig,defaultDial):resolveAll;
+  return {mode:'live',fetch:async url=>{const result=await fetchReference(url,{resolve});if(!result.ok)console.warn('[reference-fetch]',JSON.stringify({code:result.code,reason:result.reason??null,dnsMode:dnsConfig.mode}));return result;}};
 }
 
-export function fetchErrorMessage(code:FetchErrorCode){return fetchErrors[code];}
+export { fetchErrorMessage } from '../domain/references';

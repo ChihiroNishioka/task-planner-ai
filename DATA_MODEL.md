@@ -76,3 +76,17 @@ Phase 5では修正指示を前版へ結び付け、改訂版を追加します�
 本番の差し替えは本作業の対象外です。実施時にはworker、webの順に停止し、DBと `-wal`、`-shm` を退避してから、web、workerの順に起動します。旧workerと新webの混在ではドラフトジョブは待機したままです。旧webには新しい作成ボタンがありません。
 
 切り戻しではコードだけを旧版に戻せません。`breakdown-store.ts` のリンク表・インデックスのDDLと、`syncArtifacts` のリンク付きartifact除外の1行を残した切り戻しコミットを使います。新表は削除しません。両プロセスを停止して切り替え、既存ドラフトの閲覧後も分解の最新版が変わらないことを確認します。退避DBへの復元は投入後の変更を失うため、最終手段です。
+
+## URL取得の詳細と旧版互換
+
+`ReferenceStore` は `ensureColumn` で `fetch_failure_reason TEXT NULL`、`content_hint TEXT NULL`、`fetch_detail_revision INTEGER NULL`、`fetch_http_status INTEGER NULL` を追加します。最後の列が既にあれば追加しません。初期化で既存行は書き換えません。
+
+`fetch_error_code` は従来の12値を維持します。詳細理由は名前解決の未検出・失敗、安全拒否の宛先・形式、HTTPの拒否・未検出・サーバー・その他を別列へ保存します。APIでは任意の `fetchFailureReason` と `contentHint` を返し、HTTP状態の数値は返しません。未知の詳細値はnullとして読みます。理由とコードが不一致ならコードの文言を使います。
+
+開始・成功・失敗・中断回復は、revisionの更新と同じUPDATEで `fetch_detail_revision=revision+1` を書きます。読み取りでは両revisionが一致するときだけ詳細理由とcontentHintを採用します。旧版が更新するとrevisionだけが進み、古い詳細は無効になります。
+
+開始・成功・回復は詳細理由とHTTP状態をnullへ戻します。成功はcontentHintをnullも含めて上書きします。失敗時は以前の本文とcontentHintを保持します。古い試行の確定や削除後の復活を拒否する条件は維持します。
+
+`content_hint` は `SHORT_BODY` または `PAYWALL_HINT` です。HTML本文が600コードポイント未満なら短文、2,000未満で手掛かりがある場合は有料等の可能性を優先します。本文を切り詰めた場合とtext/plainにはhintを付けません。古い行は再取得までnullです。
+
+旧版更新で無効になったcontentHintは、開始・失敗・回復の更新時にもnullへ落とします。stampの更新だけで古い注意表示が復活することを防ぎます。
