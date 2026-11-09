@@ -32,14 +32,29 @@ export function nextBreakdownTracking(data: BreakdownSnapshot, previous: Breakdo
   return active.id === previous?.id ? previous : { id: active.id, revision, preserveInput: dirty };
 }
 
-export function breakdownConflictMessage(code: string | undefined, action: BreakdownCommand['action'], status: BreakdownSnapshot['jobs'][number]['status'] | undefined): { message: string; compare: boolean } {
+export function breakdownConflictMessage(code: string | undefined, action: BreakdownCommand['action'], state: { snapshot: BreakdownSnapshot; baseVersion: string | null; jobId?: string } | undefined): { message: string; compare: boolean } {
   if (code === 'TASK_NOT_RUNNABLE') return { compare: false, message: '完了・中止したタスクは変更できません。入力は保持しています。タスクの状態を確認してください。' };
   if (action === 'cancel') {
+    const status = state?.snapshot.jobs.find(job => job.id === state.jobId)?.status;
     const reason = status === 'SUCCEEDED' ? 'この作り直しは成功済みのため取り消せません。' : status === 'FAILED' ? 'この作り直しは失敗済みのため取り消せません。' : '作り直しの状態が変わったため取り消せませんでした。';
-    return { compare: false, message: `${reason}入力は保持しています。最新のジョブ状態を確認してください。` };
+    return { compare: false, message: `${reason}入力は保持しています。「最新の版を読み込む」で結果を確認できます。` };
+  }
+  if (code === 'CONFLICT' && action === 'regenerate' && state
+    && !state.snapshot.jobs.some(job => job.status === 'QUEUED' || job.status === 'RUNNING')
+    && (state.snapshot.versions.at(-1)?.id ?? null) !== state.baseVersion) {
+    return { compare: true, message: '別の変更が保存されたため作り直しを受け付けられませんでした。入力とコメントは保持しています。最新の版と比較して載せ替えてから、もう一度作り直しを依頼してください。' };
   }
   if (code === 'CONFLICT' && (action === 'save' || action === 'restore')) return { compare: true, message: '別の変更があります。入力は保持しています。最新の版と比較し、載せ替えてから保存してください。' };
   return { compare: false, message: '作り直しの受付状態またはタスクの状態が変わりました。入力は保持しています。最新の状態を確認してから再操作してください。' };
+}
+
+export function breakdownFailureReason(code: string | null): string {
+  switch (code) {
+    case 'CONFLICT': return 'AIの作成中に分解かタスクが更新されたため、AIの結果は使いませんでした。';
+    case 'WORKER_INTERRUPTED': return 'AIの作成処理が途中で中断されました。もう一度作り直しを依頼してください。';
+    case 'GENERATION_FAILED': return 'AIの作成に失敗しました。もう一度作り直しを依頼してください。';
+    default: return 'AIの作り直しを完了できませんでした。「最新の版を読み込む」で状態を確認してから、もう一度依頼してください。';
+  }
 }
 
 export class BreakdownError extends Error {

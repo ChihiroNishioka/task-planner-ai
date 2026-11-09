@@ -130,11 +130,11 @@ test('待機中の別保存・競合入力の明示回収と破棄', async ({ pa
   await editor.getByRole('button', { name: 'ユーザー編集版を保存' }).click();
   await expect(editor.getByText('ユーザー編集版を保存しました。', { exact: true })).toBeVisible();
   worker();
-  await expect(editor.locator('[data-app-error="true"]')).toContainText('CONFLICT');
+  await expect(editor.locator('[data-app-error="true"]')).toContainText('AIの作成中に分解かタスクが更新されたため、AIの結果は使いませんでした。');
   await page.reload();
   await expect(editor.getByLabel('項目 1', { exact: true })).toHaveValue('待機中に別保存する手順');
-  await editor.getByText('失敗した再生成の入力（1件）', { exact: true }).click();
-  await editor.getByRole('button', { name: '失敗入力1を編集に戻す' }).click();
+  await editor.getByText('完了しなかった作り直しの入力（1件）', { exact: true }).click();
+  await editor.getByRole('button', { name: '未完了入力1を編集に戻す' }).click();
   await expect(editor.getByLabel('項目 1', { exact: true })).toHaveValue('生成に渡した手順');
   await expect(editor.getByLabel('全体コメント', { exact: true })).toHaveValue('生成時のコメント');
   page.once('dialog', (dialog) => dialog.accept());
@@ -211,8 +211,8 @@ test('基準版が同じ失敗入力も自動復活せず明示回収後に破�
   await page.goto(`/tasks/${task.id}`);
   const editor = page.getByRole('region', { name: '分解編集' });
   await expect(editor.getByLabel('項目 1', { exact: true })).toHaveValue('最新版');
-  await editor.getByText('失敗した再生成の入力（1件）', { exact: true }).click();
-  await editor.getByRole('button', { name: '失敗入力1を編集に戻す' }).click();
+  await editor.getByText('完了しなかった作り直しの入力（1件）', { exact: true }).click();
+  await editor.getByRole('button', { name: '未完了入力1を編集に戻す' }).click();
   await expect(editor.getByLabel('項目 1', { exact: true })).toHaveValue('失敗入力');
   page.once('dialog', (dialog) => dialog.accept());
   await editor.getByRole('button', { name: '最新の版を読み込む' }).click();

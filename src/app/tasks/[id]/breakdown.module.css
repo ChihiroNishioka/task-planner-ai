@@ -12,6 +12,7 @@
 .editor button { min-height: 44px; height: auto; min-width: 44px; max-width: 100%; white-space: normal; padding: 10px 12px; }
 .comment { margin-top: 22px; padding-top: 18px; border-top: 1px solid #d9dedb; }
 .history { margin-top: 22px; border-top: 1px solid #d9dedb; padding-top: 14px; }
+.history[tabindex="-1"]:focus { outline: 3px solid #397dd1; outline-offset: 3px; }
 .history summary { min-height: 44px; cursor: pointer; font-weight: 650; }
 .warning { padding: 12px; background: #fff1d6; color: #744400; border-radius: 8px; }
 @media (max-width: 460px) { .editor { padding: 12px; } .step { padding: 10px; } }
