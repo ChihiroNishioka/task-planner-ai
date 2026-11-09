@@ -53,7 +53,7 @@ UIはサービスごとに「モック」「未接続」「接続確認中」「
 
 必須画面はタスク一覧、登録、詳細、レビュー、設定の5つ。全画面に読み込み中・エラーと再試行・0件または未設定の表示を用意する。主要操作はタップ可能領域44px以上とし、横スクロールなしで使える。キーボード操作、フォームラベル、読み上げ可能な状態通知を備える。
 
-一覧は今日、明日以降、期限超過、AI準備完了、AI実行中、完了で絞り込む。期限未設定も見失わない。登録ではテキスト、録音、画像、PDFを受け付け、複数候補を確認・修正して確定する。録音拒否・非対応時は音声ファイル選択かテキスト入力を使う。サーバー側文字起こしを基本とし、モックの文字起こしを実認識と表示しない。
+一覧は今日、明日以降、期限超過、AI準備完了、AI実行中、完了、中止で絞り込む。完了・中止は今日／明日以降／期限超過に含めない。期限未設定も見失わない。登録ではテキスト、録音、画像、PDFを受け付け、複数候補を確認・修正して確定する。録音拒否・非対応時は音声ファイル選択かテキスト入力を使う。サーバー側文字起こしを基本とし、モックの文字起こしを実認識と表示しない。
 
 詳細に元入力、日時、両状態、作業計画、資料、成果物、版・修正履歴、評価、保存先リンクを表示する。編集、完了、延期、削除、再実行、再生成、修正、評価、最終版承認を別操作とする。削除はアプリ内の論理削除とジョブ中止に限定し、外部削除を伴わせない。レビューでは版切替、変更内容、音声・テキスト修正、評価、承認、保存先閲覧を扱う。
 
@@ -67,7 +67,7 @@ UIはサービスごとに「モック」「未接続」「接続確認中」「
 
 | エンティティ | 項目と制約 |
 | --- | --- |
-| Task | id、notion_page_id、title、description、category、task_type、original_input、deadline、prepare_by、review_by、remind_at、priority、status、ai_status、completion_criteria、drive_folder_id、created_at、updated_at。追加は purpose、required_inputs、ai_preparation_required、estimated_ai_duration、estimated_human_duration、timezone、revision、schedule_revision、deleted_at、sync_status。categoryは WORK / PERSONAL / STUDY、task_typeは SOLUTION_DESIGN / EMAIL_REPLY / ASSIGNMENT / GENERAL。 |
+| Task | id、notion_page_id、title、description、category、task_type、original_input、deadline、prepare_by、review_by、remind_at、priority、status、ai_status、completion_criteria、drive_folder_id、created_at、updated_at。追加は completed_at、purpose、required_inputs、ai_preparation_required、estimated_ai_duration、estimated_human_duration、timezone、revision、schedule_revision、deleted_at、sync_status。categoryは WORK / PERSONAL / STUDY、task_typeは SOLUTION_DESIGN / EMAIL_REPLY / ASSIGNMENT / GENERAL。 |
 | TaskInput | id、task_id、type、content、drive_file_id、created_at。typeは TEXT / AUDIO / IMAGE / PDF。追加は安全なblob参照、MIME、size、認識状態、モック表示情報、入力グループID。複数タスクへの入力関連付けは技術的な中間表で保持する。 |
 | ExecutionJob | id、task_id、job_type、status、scheduled_at、started_at、finished_at、retry_count、idempotency_key、error_message、result_reference。追加は lease_owner、lease_until、fencing_token、max_attempts、next_retry_at、schedule_revision、mode、operation_key。idempotency_keyは一意。 |
 | Artifact | id、task_id、artifact_type、title、current_version_id、approved_version_id、created_at。表示中の版と承認された版を分ける。 |
@@ -88,7 +88,7 @@ UIはサービスごとに「モック」「未接続」「接続確認中」「
 | 対象 | 遷移・規則 |
 | --- | --- |
 | 抽出候補 | 確認待ちから確定または破棄。曖昧な期限・対象メール・追加先タスクは確認待ち。確定前にTaskや外部操作を作らない。 |
-| Task.status | OPEN → IN_PROGRESS → COMPLETED。OPEN / IN_PROGRESS → CANCELLED。明示的な再開でOPENに戻せる。延期は期限とschedule_revisionの更新。完了・中止・論理削除は新規実行を禁止する。 |
+| Task.status | OPEN / IN_PROGRESS / COMPLETED / CANCELLED の異なる状態間を自由に変更できる。完了・中止からの明示的な再開先はOPENまたはIN_PROGRESS。COMPLETEDだけcompleted_atを持ち、他状態への変更でNULLに戻す。同状態への変更は日時・revisionを変えない。変更先と現状態が異なるときだけexpectedStatusを比較し、競合は最新Task付き409とする。進行系と終了系をまたぐときだけrevisionを上げる。判定と予定・通知の副作用は同一immediateトランザクションで処理する。延期は期限とschedule_revisionの更新。完了・中止・論理削除は新規実行を禁止する。 |
 | Task.ai_status | NOT_REQUIRED、WAITING_CONFIRMATION、QUEUED、RUNNING、READY、FAILED、CANCELLED。許可と資料が揃えばQUEUEDからRUNNINGへ進み、品質確認と保存成功後だけREADYへ進む。失敗はFAILED、再実行は新しい要求revisionでQUEUED。 |
 | ExecutionJob | SCHEDULED → RUNNING → SUCCEEDED。失敗時はRETRY_WAITからRUNNINGへ戻り、上限でFAILED。完了・中止・旧スケジュールはCANCELLED。リース切れは取得権の再検証後に回収する。 |
 | ArtifactVersion | 本文は不変。保存状態はPENDING → SAVEDまたはFAILED。評価はUNRATED / GOOD / BADで相互変更可能。承認状態はUNAPPROVED / APPROVED / REVOKEDで、評価・タスク完了と独立する。 |
@@ -96,11 +96,15 @@ UIはサービスごとに「モック」「未接続」「接続確認中」「
 | SyncEvent | PENDING → SYNCING → SYNCED。失敗はRETRY_WAIT / FAILED、差分競合はCONFLICT。競合が解消するまで該当項目の更新と期限依存実行を保留する。 |
 | 外部操作承認 | 未承認 → 有効な承認 → 使用済み。対象変更・有効期限切れ・取消で無効。認証済みユーザーの明示確認なしに有効にしない。最終版承認から自動導出しない。 |
 
-同時編集はrevisionの比較で片方を409にし、通知日時を古いデータで戻さない。ワーカーはDBの行ロックとリースでジョブを取得する。取得時と副作用直前にTask状態、schedule_revision、権限、承認を再検証する。リースを失ったワーカーは古いfencing_tokenで結果を確定できない。
+状態変更以外の同時編集はrevisionの比較で片方を409にし、通知日時を古いデータで戻さない。ワーカーはDBの行ロックとリースでジョブを取得する。取得時と副作用直前にTask状態、schedule_revision、権限、承認を再検証する。リースを失ったワーカーは古いfencing_tokenで結果を確定できない。
 
 外部操作はDBとの単一トランザクションにできない。操作キーと結果参照を永続化し、保存成功後に応答だけ失った場合は外部結果を照合してから再開する。送信の結果が不明ならUNKNOWNで止め、無条件再送しない。対応先に重複排除や照合手段が無い場合、完全な一度だけの実行は保証せず、手動照合を代替とする。
 
 v1、v2、v3の親版、指示、差分、本文を残す。同一成果物の採番をDBで直列化する。過去版への復帰はcurrent_version_idの切替とし、履歴を消さず、承認された版も勝手に切り替えない。別の版を最終承認する操作では旧承認を取り消し、approved_version_idと承認状態を同一トランザクションで更新する。最新の入力より古い生成結果には古い要求への成果物と表示し、現在の準備完了に使わない。
+
+状態変更では、終了系へ入ったとき待機予定と未配信通知を停止し、実行済み予定・配信済み通知は維持する。再開時は停止された最新予定を同じ締切・見積りと現在時刻で新revisionへ作り直す。最新予定が実行済みなら、未来の締切で停止通知だけを同じ行に戻し、AI準備を再実行しない。予定なし・配信済み・実行中・失敗予定は戻さない。停止済みジョブは復活させず、ai_statusがCANCELLEDのときだけ要否に応じた初期値へ戻す。実行中の準備は完走して成果物を保存しREADYになる。進行系どうしの変更では実行中の分解・改訂を妨げない。成果物・評価・最終承認・外部操作承認は変更しない。
+
+詳細では状態を選んだ後「状態を変更」で保存し、再開だけ確認ダイアログを出す。完了日時は日本時間で表示する。終了系ではAI準備依頼と期限設定を無効にし、再開を案内する。POST /scheduleの終了系判定・期限更新・予定・通知の保存は1トランザクションとし、終了系は409 TASK_NOT_ACTIVEで全項目を不変に保つ。タスクの「中止」とAI・ジョブの「停止」を表示で区別する。
 
 ### 日時・再試行・上限の決定
 
@@ -108,7 +112,7 @@ v1、v2、v3の親版、指示、差分、本文を残す。同一成果物の�
 
 新規候補の日時だけが曖昧な場合は確認する。日付のみは勝手に23:59にせず時刻確認待ち。「金曜日」は基準日を示して候補を確認する。期限なしなら準備を即時開始し保存成功時に通知する。自動実行不許可ならQUEUEDにせず確認待ちにする。
 
-開始予定が現在以前なら現在を開始予定とする。通知予定も過ぎていれば現在に一度だけ通知する。締切が過去でも期限超過を明示し、未完成の通知を出す。完了・中止タスクは実行しない。通知時に未完成なら未完成・途中成果物・残作業・次の対応を表示し、完了したふりをしない。期限変更後は旧スケジュールを無効化し、新revisionで再計算する。
+開始予定が現在以前なら現在を開始予定とする。通知予定も過ぎていれば現在に一度だけ通知する。締切が過去でも期限超過を明示し、未完成の通知を出す。ただし完了・中止からの再開時は、予定の締切が現在以前なら予定も通知も戻さない。完了・中止タスクは実行しない。通知時に未完成なら未完成・途中成果物・残作業・次の対応を表示し、完了したふりをしない。期限変更後は旧スケジュールを無効化し、新revisionで再計算する。
 
 初期値は外部処理の最大3試行、再試行待ち1分・5分、自動品質修正は最大2回。実行回数・費用上限は設定可能とし、実AIは上限未設定なら有効化しない。これは今回の設計上の初期値で、指示書が指定した数値ではない。予算不足、非再試行エラー、権限エラーでは自動再試行しない。
 
