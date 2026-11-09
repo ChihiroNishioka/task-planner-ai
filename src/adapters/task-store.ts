@@ -1,16 +1,25 @@
 import Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { aiStatusSchema, taskInputSchema, taskSchema, type Task } from '../domain/task';
+import { aiStatusSchema, isClosedTaskStatus, taskInputSchema, taskSchema, taskStatusSchema, type ScheduleEffect, type Task, type TaskStatus } from '../domain/task';
+import { calculateSchedule } from '../domain/scheduling';
+import { createScheduleTables, currentSchedule, ensureColumn, insertSchedule, stopTaskSchedules } from './schedule-records';
 
 const taskRowSchema = z.object({
   id: z.string().uuid(), title: z.string(), description: z.string(), original_input: z.string(),
   deadline: z.string().nullable(), category: taskSchema.shape.category, task_type: taskSchema.shape.taskType,
   priority: taskSchema.shape.priority, ai_preparation_required: z.number(), status: taskSchema.shape.status,
   ai_status: taskSchema.shape.aiStatus, revision: z.number(), created_at: z.string(), updated_at: z.string(),
-  deleted_at: z.string().nullable(), operation_key: z.string(),
+  deleted_at: z.string().nullable(), completed_at: z.string().nullable(), operation_key: z.string(),
 });
 type TaskRow = z.infer<typeof taskRowSchema>;
+type StatusChangeResult = { task: Task; changed: boolean; scheduleEffect: ScheduleEffect };
+
+export class TaskStatusError extends Error {
+  constructor(readonly code: 'STATUS_CONFLICT', readonly task: Task) {
+    super('別の画面でタスクの状態が変わりました。');
+  }
+}
 
 export class TaskStore {
   private readonly db: Database.Database;
@@ -34,8 +43,15 @@ export class TaskStore {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       deleted_at TEXT,
+      completed_at TEXT,
       operation_key TEXT NOT NULL UNIQUE
     )`);
+    ensureColumn(this.db, 'tasks', 'completed_at', 'TEXT');
+    this.db.transaction(() => {
+      this.db.prepare("UPDATE tasks SET completed_at = updated_at WHERE status = 'COMPLETED' AND completed_at IS NULL").run();
+      this.db.prepare("UPDATE tasks SET completed_at = NULL WHERE status <> 'COMPLETED' AND completed_at IS NOT NULL").run();
+    }).immediate();
+    createScheduleTables(this.db);
   }
 
   create(rawInput: unknown, operationKey: string = randomUUID()): Task {
@@ -65,11 +81,70 @@ export class TaskStore {
     return row ? fromRow(row) : null;
   }
 
-  updateStatus(id: string, status: Task['status']): Task | null {
-    const now = new Date().toISOString();
-    const result = this.db.prepare('UPDATE tasks SET status = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND deleted_at IS NULL')
-      .run(status, now, id);
-    return result.changes ? this.get(id) : null;
+  changeStatus(id: string, rawStatus: TaskStatus, options: { expectedStatus?: TaskStatus; now?: Date } = {}): StatusChangeResult | null {
+    return this.db.transaction((): StatusChangeResult | null => {
+      const current = this.get(id);
+      if (!current) return null;
+      const status = taskStatusSchema.parse(rawStatus);
+      const expectedStatus = options.expectedStatus === undefined ? undefined : taskStatusSchema.parse(options.expectedStatus);
+      if (status === current.status) return { task: current, changed: false, scheduleEffect: 'NONE' };
+      if (expectedStatus !== undefined && expectedStatus !== current.status) throw new TaskStatusError('STATUS_CONFLICT', current);
+      const now = options.now ?? new Date();
+      const wasClosed = isClosedTaskStatus(current.status);
+      const closed = isClosedTaskStatus(status);
+      let scheduleEffect: ScheduleEffect = 'NONE';
+      if (!wasClosed && closed) {
+        if (stopTaskSchedules(this.db, id) > 0) scheduleEffect = 'STOPPED';
+      } else if (wasClosed && !closed) {
+        scheduleEffect = this.restoreSchedule(id, now);
+      }
+      const aiStatus = wasClosed && !closed && current.aiStatus === 'CANCELLED'
+        ? current.aiPreparationRequired ? 'WAITING_CONFIRMATION' : 'NOT_REQUIRED'
+        : current.aiStatus;
+      this.db.prepare('UPDATE tasks SET status = ?, completed_at = ?, ai_status = ?, revision = revision + ?, updated_at = ? WHERE id = ?')
+        .run(status, status === 'COMPLETED' ? now.toISOString() : null, aiStatus, Number(wasClosed !== closed), now.toISOString(), id);
+      const task = this.get(id);
+      if (!task) throw new Error('変更したタスクを取得できません。');
+      return { task, changed: true, scheduleEffect };
+    }).immediate();
+  }
+
+  updateStatus(id: string, status: TaskStatus): Task | null {
+    return this.changeStatus(id, status)?.task ?? null;
+  }
+
+  private restoreSchedule(id: string, now: Date): ScheduleEffect {
+    const latest = currentSchedule(this.db, id);
+    if (!latest) return 'NONE';
+    const passed = latest.deadline !== null && Date.parse(latest.deadline) <= now.getTime();
+    const hasPreparationJobs = this.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'preparation_jobs'").get() !== undefined;
+    this.db.prepare(`UPDATE task_schedules SET status = 'FAILED'
+      WHERE task_id = ? AND status = 'RUNNING' AND deadline IS NOT NULL AND julianday(deadline) <= julianday(?)
+      ${hasPreparationJobs ? `AND NOT EXISTS (SELECT 1 FROM preparation_jobs
+        WHERE preparation_jobs.task_id = task_schedules.task_id
+          AND preparation_jobs.operation_key = 'schedule:' || task_schedules.id)` : ''}`)
+      .run(id, now.toISOString());
+    if (latest.status === 'RUNNING' && passed) return 'DEADLINE_PASSED';
+    if (latest.status === 'SCHEDULED' || latest.status === 'CANCELLED') {
+      if (passed) {
+        stopTaskSchedules(this.db, id);
+        return 'DEADLINE_PASSED';
+      }
+      insertSchedule(this.db, id, calculateSchedule({ deadline: latest.deadline, now, estimatedAiMinutes: latest.estimatedAiMinutes, estimatedHumanMinutes: latest.estimatedHumanMinutes }));
+      return 'RESCHEDULED';
+    }
+    if (latest.status === 'SUCCEEDED' || latest.status === 'RUNNING') {
+      const notification = z.object({ status: z.string() }).nullable().parse(
+        this.db.prepare('SELECT status FROM notifications WHERE schedule_id = ?').get(latest.id) ?? null);
+      if (notification?.status === 'CANCELLED') {
+        if (passed) return 'DEADLINE_PASSED';
+        if (latest.deadline !== null) {
+          this.db.prepare("UPDATE notifications SET status = 'SCHEDULED' WHERE schedule_id = ? AND status = 'CANCELLED'").run(latest.id);
+          return 'NOTIFICATION_RESTORED';
+        }
+      }
+    }
+    return 'NONE';
   }
 
   updateAiStatus(id: string, aiStatus: Task['aiStatus']): Task | null {
@@ -96,7 +171,7 @@ export class TaskStore {
 
   delete(id: string): boolean {
     const now = new Date().toISOString();
-    return this.db.prepare("UPDATE tasks SET status = 'CANCELLED', ai_status = 'CANCELLED', deleted_at = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND deleted_at IS NULL")
+    return this.db.prepare("UPDATE tasks SET status = 'CANCELLED', completed_at = NULL, ai_status = 'CANCELLED', deleted_at = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND deleted_at IS NULL")
       .run(now, now, id).changes > 0;
   }
 
@@ -122,6 +197,7 @@ function fromRow(row: TaskRow): Task {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     deletedAt: row.deleted_at,
+    completedAt: row.completed_at,
     syncStatus: 'PENDING_MOCK',
   });
 }

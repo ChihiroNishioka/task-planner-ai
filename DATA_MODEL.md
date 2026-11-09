@@ -4,7 +4,7 @@ Taskが唯一の管理対象です。以下の技術データはTaskへ紐付き
 
 | エンティティ | 主な項目 | 用途 |
 | --- | --- | --- |
-| Task | id、title、description、category、task_type、deadline、prepare_by、remind_at、status、ai_status、revision | タスクと期限の管理 |
+| Task | id、title、description、category、task_type、deadline、prepare_by、remind_at、status、completed_at、ai_status、revision | タスクと期限の管理 |
 | TaskInput | id、task_id、type、content、created_at | テキスト、音声、画像、PDF入力 |
 | ExecutionJob | id、task_id、job_type、status、scheduled_at、retry_count、idempotency_key、lease_until | 再開可能な非同期実行 |
 | Artifact | id、task_id、current_version_id、approved_version_id | 成果物と現在版・承認版 |
@@ -19,6 +19,14 @@ Taskが唯一の管理対象です。以下の技術データはTaskへ紐付き
 | ExternalActionApproval | id、task_id、target_id、content_hash、operation、expires_at、used_at | 外部操作の個別承認 |
 
 Task statusはOPEN、IN_PROGRESS、COMPLETED、CANCELLEDです。ai_statusはNOT_REQUIRED、WAITING_CONFIRMATION、QUEUED、RUNNING、READY、FAILED、CANCELLEDです。Good評価、成果物の最終承認、タスク完了、外部操作承認は独立しています。
+
+`Task.completed_at` はCOMPLETEDのときだけISO日時を持ち、APIでは `completedAt` として返します。完了へ変更した時刻を保存し、再開または中止でNULLに戻します。同状態への再送では日時・revision・updated_atを変えません。状態の競合はexpectedStatusで検出し、revisionは進行系と終了系をまたぐ変更でだけ増やします。
+
+SQLiteのTaskStore起動時に `completed_at TEXT` を追加し、毎回1つのimmediateトランザクションで整合性を修復します。既存COMPLETEDでNULLの場合はupdated_atを近似完了日時として採用し、他状態で値がある場合はNULLにします。revision・updated_at・予定・通知は移行で変えません。予定・通知表はTaskStore単体でも初期化します。
+
+完了・中止は待機予定と未配信通知をCANCELLEDにします。再開では最新の停止予定だけを同じ締切・見積りで再計算して新revisionを作ります。実行済み予定の停止通知は未来の締切の場合だけ同じ行をSCHEDULEDに戻します。締切が現在以前なら復帰せず、配信済み履歴は維持します。判定と副作用はTaskStore.changeStatusの1つのimmediateトランザクションで行います。
+
+旧新版の混在動作は保証しません。投入時はworker、webの順で両方停止し、DBと-wal/-shmを退避してから新版をweb、workerの順に起動します。起動後はCOMPLETEDでcompleted_atがNULLの行と、他状態でcompleted_atを持つ行が0件であることを確認します。切り戻しはコードのみとし、追加列は削除しません。退避DBへの復元は投入後の変更を失うため最終手段です。
 
 各サービス接続はmode、connection_status、疎通確認日時、権限範囲を持ちます。秘密値そのものはDBや画面に保存しません。モックIDは実サービスIDと区別します。
 

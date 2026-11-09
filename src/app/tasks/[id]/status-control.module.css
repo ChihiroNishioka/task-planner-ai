@@ -1,0 +1,53 @@
+.control {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  margin: 12px 0 24px;
+}
+
+.control [role='radiogroup'] {
+  width: 100%;
+  min-width: 0;
+}
+
+.control [role='radio'] {
+  min-width: 0;
+  padding-inline: 8px;
+}
+
+.actions {
+  display: flex;
+  width: 100%;
+}
+
+.submit {
+  min-height: 44px;
+}
+
+.dialog button {
+  min-height: 44px;
+}
+
+.feedback {
+  margin: 0;
+  padding: 12px;
+  border-radius: 8px;
+  background: #eef5fa;
+  overflow-wrap: anywhere;
+}
+
+.feedback:focus {
+  outline: 3px solid #245c8f;
+  outline-offset: 3px;
+}
+
+.error {
+  color: #842b29;
+  background: #fff1f0;
+}
+
+@media (max-width: 600px) {
+  .submit {
+    width: 100%;
+  }
+}

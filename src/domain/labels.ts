@@ -1,7 +1,9 @@
+import type { ScheduleEffect, TaskStatus } from './task';
+
 /** 画面に出す状態ラベル。内部のenum値はそのまま保ち、表示だけ日本語にする。 */
 const statusLabels: Record<string, string> = { OPEN: '未着手', IN_PROGRESS: '進行中', COMPLETED: '完了', CANCELLED: '中止' };
-const aiStatusLabels: Record<string, string> = { NOT_REQUIRED: '準備なし', WAITING_CONFIRMATION: '確認待ち', QUEUED: '待機中', RUNNING: '実行中', READY: '準備完了', FAILED: '失敗', CANCELLED: '中止' };
-const jobStatusLabels: Record<string, string> = { QUEUED: '待機中', RUNNING: '実行中', SUCCEEDED: '完了', FAILED: '失敗', CANCELLED: '中止' };
+const aiStatusLabels: Record<string, string> = { NOT_REQUIRED: '準備なし', WAITING_CONFIRMATION: '確認待ち', QUEUED: '待機中', RUNNING: '実行中', READY: '準備完了', FAILED: '失敗', CANCELLED: '停止' };
+const jobStatusLabels: Record<string, string> = { QUEUED: '待機中', RUNNING: '実行中', SUCCEEDED: '完了', FAILED: '失敗', CANCELLED: '停止' };
 const taskTypeLabels: Record<string, string> = { SOLUTION_DESIGN: '構想・設計', EMAIL_REPLY: 'メール返信', ASSIGNMENT: '課題', GENERAL: '一般' };
 const categoryLabels: Record<string, string> = { WORK: '仕事', PERSONAL: '個人', STUDY: '学習' };
 const inputTypeLabels: Record<string, string> = { AUDIO: '音声', IMAGE: '画像', PDF: 'PDF資料' };
@@ -13,6 +15,18 @@ const UNKNOWN = '不明';
 const pick = (labels: Record<string, string>, value: string) => labels[value] ?? UNKNOWN;
 
 export const statusLabel = (value: string) => pick(statusLabels, value);
+export function statusChangeMessage(status: TaskStatus, effect: ScheduleEffect, deadline: string | null): string {
+  const suffixes = {
+    NONE: '',
+    STOPPED: '残っていた締切前の通知を止めました（モック）。',
+    RESCHEDULED: '締切前の通知を作り直しました（モック）。',
+    NOTIFICATION_RESTORED: '止めていた締切前の通知を戻しました（モック）。',
+    DEADLINE_PASSED: '締切を過ぎているため、締切前の通知は戻していません。必要なら新しい締切を設定してください。',
+  } satisfies Record<ScheduleEffect, string>;
+  const suffix = deadline === null && (effect === 'STOPPED' || effect === 'RESCHEDULED')
+    ? '締切がないため、通知は設定していません（モック）。' : suffixes[effect];
+  return `状態を「${statusLabel(status)}」に変更しました。${suffix}`;
+}
 export const aiStatusLabel = (value: string) => pick(aiStatusLabels, value);
 export const jobStatusLabel = (value: string) => pick(jobStatusLabels, value);
 export const taskTypeLabel = (value: string) => pick(taskTypeLabels, value);
