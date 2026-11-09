@@ -37,7 +37,7 @@ for (const viewport of viewports) {
       const task = await createTask(request, `detail-${viewport.name}`);
       await page.goto(`/tasks/${task.id}`);
       await expect(page.getByRole('heading', { name: task.title })).toBeVisible();
-      await expect(page.getByText('解析はモックのため行いません。')).toBeVisible();
+      await expect(page.getByText('通常の添付は解析未実行です。')).toBeVisible();
       await expect(page.locator('.detail-card')).toContainText('未着手 / AI 準備なし');
       await expect(page.locator('.detail-card')).toContainText('仕事 / 一般');
       await expect(page.locator('main')).not.toContainText(/\b(OPEN|NOT_REQUIRED|GENERAL|WORK)\b/);

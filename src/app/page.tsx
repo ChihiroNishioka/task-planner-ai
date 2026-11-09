@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { isClosedTaskStatus, taskListResponseSchema, type Task } from '../domain/task';
 import { useServices } from './use-services';
+import { ImageTaskComposer } from './image-task-composer';
 import { aiStatusLabel, statusLabel, userMessage } from '../domain/labels';
 
 function bannerText(ai: { mode: string; label: string } | null, error: string): string {
@@ -34,6 +35,7 @@ export default function Home() {
     }
   }, [actionErrorRequest]);
   const [busy, setBusy] = useState(false);
+  const [imageBusy, setImageBusy] = useState(false);
   const { services, error: servicesError, reload: reloadServices } = useServices();
   const ai = services?.find((service) => service.name === 'AI') ?? null;
 
@@ -65,7 +67,7 @@ export default function Home() {
 
   async function createTask(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!title.trim()) return;
+    if (!title.trim() || imageBusy) return;
     setBusy(true);
     try {
       const response = await fetch('/api/tasks', {
@@ -121,8 +123,10 @@ export default function Home() {
       <label htmlFor="task-title">新しいタスク</label>
       <textarea id="task-title" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="やることを入力" rows={2} />
       <div className="form-row"><label htmlFor="deadline">期限</label><input id="deadline" type="date" value={deadline} onChange={(event) => setDeadline(event.target.value)} /></div>
-      <button className="primary-button" disabled={busy}>{busy ? '登録中…' : 'タスクを追加'}</button>
+      <button className="primary-button" disabled={busy || imageBusy} aria-describedby={imageBusy ? 'image-task-guidance' : undefined}>{busy ? '登録中…' : 'タスクを追加'}</button>
+      {imageBusy && <p id="image-task-guidance">画像の作成を終えるか取り消すと使えます</p>}
     </form>
+    <ImageTaskComposer note={title} deadline={deadline} onBusyChange={setImageBusy} />
     <nav className="filter-list" aria-label="タスクの絞り込み">{filters.map((value) => <button key={value} className={filter === value ? 'filter active' : 'filter'} onClick={() => setFilter(value)}>{value}</button>)}</nav>
     {actionError ? <p ref={actionErrorRef} tabIndex={-1} className="state error" data-testid="task-action-error" role="alert">{actionError}</p> : null}
     {loading ? <p className="state" role="status">読み込み中…</p> : error ? <div className="state error" role="alert"><p>{error}</p><button className="secondary-button" onClick={() => void loadTasks()}>再試行</button></div> : visibleTasks.length === 0 ? <div className="state empty"><h2>タスクはありません</h2><p>上のフォームから追加できます。</p></div> : <section className="task-list" aria-label="タスク一覧">{visibleTasks.map((task) => <article className="task-card" key={task.id}>

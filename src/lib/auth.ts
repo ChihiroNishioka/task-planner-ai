@@ -34,6 +34,11 @@ export { isSafeNextPath } from './auth-next';
 export function validateCsrfRequest(request: Request): boolean {
   const headers = request.headers;
   if (headers.get('content-type')?.split(';')[0].trim().toLowerCase() !== 'application/json') return false;
+  return isSameOriginRequest(request);
+}
+
+export function isSameOriginRequest(request: Request): boolean {
+  const headers = request.headers;
   if (headers.get('sec-fetch-site')?.toLowerCase() === 'cross-site') return false;
   const host = headers.get('x-forwarded-host')?.split(',')[0].trim() || headers.get('host');
   const origin = headers.get('origin');

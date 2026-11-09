@@ -9,7 +9,7 @@ export const workPlanSchema = z.object({
 });
 
 export const artifactModeSchema = z.enum(['ai', 'mock', 'mock_fallback']);
-export const fallbackReasonSchema = z.enum(['CLI_NOT_FOUND', 'CLI_EXIT', 'CLI_TIMEOUT', 'INVALID_OUTPUT']);
+export const fallbackReasonSchema = z.enum(['CLI_NOT_FOUND', 'CLI_EXIT', 'CLI_TIMEOUT', 'INVALID_OUTPUT', 'CLI_UNSUPPORTED', 'WORKER_UNAVAILABLE']);
 
 export const generationSchema = z.object({
   plan: workPlanSchema,
@@ -23,6 +23,8 @@ const fallbackReasonLabels: Record<z.infer<typeof fallbackReasonSchema>, string>
   CLI_EXIT: 'AIのCLIがエラーで終了しました',
   CLI_TIMEOUT: 'AIの応答が時間内に返りませんでした',
   INVALID_OUTPUT: 'AIの出力形式が不正でした',
+  CLI_UNSUPPORTED: 'このCLIは画像の読み取りに対応していません',
+  WORKER_UNAVAILABLE: '画像を読み取るワーカーが停止しています',
 };
 
 export function modeLabel(mode: ArtifactMode, reason: string | null): string {

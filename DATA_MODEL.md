@@ -77,6 +77,20 @@ Phase 5では修正指示を前版へ結び付け、改訂版を追加します�
 
 切り戻しではコードだけを旧版に戻せません。`breakdown-store.ts` のリンク表・インデックスのDDLと、`syncArtifacts` のリンク付きartifact除外の1行を残した切り戻しコミットを使います。新表は削除しません。両プロセスを停止して切り替え、既存ドラフトの閲覧後も分解の最新版が変わらないことを確認します。退避DBへの復元は投入後の変更を失うため、最終手段です。
 
+## 画像の提案と確認した読み取り結果
+
+`ImageProposalStore` と `InputStore` は、`image_proposals` と `task_input_analyses` および待機順インデックス `image_proposals_queue` を `CREATE IF NOT EXISTS` で追加します。この変更による既存表のALTERと既存行の補完はありません。
+
+`image_proposals` は操作キーと要求ハッシュ、画像情報、メモ、候補JSON、実行モード、失敗理由、実行tokenとlease、確認済み入力とハッシュ、作成tokenとlease、タスクID、有効期限を持ちます。状態は `QUEUED`、`RUNNING`、`READY`、`CREATING`、`CONSUMED` です。AI失敗は `READY` と `mock_fallback` および失敗理由で表します。
+
+作成受付はimmediateトランザクションで確認値を固定します。タスク作成は `image-proposal:<id>` を操作キーにし、添付blobは `<提案ID>.blob` に固定します。停止後は同じ確認値で再開し、別の確認値は拒否します。作成中の提案は削除と期限切れ掃除から保護します。lease切れはGETとworkerの掃除で復旧し、画像欠落時は `createStuck` を返します。
+
+`task_input_analyses` は `input_id` を主キーに、`task_id`、`mode`、`extracted_text`、`proposal_id`、`created_at` を保持します。実AIで読み取り、利用者が確認した空でない文だけ保存します。分析行のある入力は `EXTRACTED`、ない入力は `NOT_PROCESSED` です。入力一覧APIは分析状態だけを返し、本文を返しません。
+
+未使用提案は24時間、使用済み行は7日で掃除します。作成済みに遷移すると候補JSON、メモ、確認済みJSONを消し、再送判定のハッシュを残します。元画像は保持せず、正規化JPEGだけを保存します。
+
+投入は本作業の範囲外です。実施時は新版のbuildを別checkoutで済ませ、worker、webの順に停止します。停止確認後にDB、`-wal`、`-shm`、blobディレクトリを退避し、web、workerの順に起動します。旧workerと新webの混在は保証しません。切り戻しは両方を停止し、基点 `8ee2bbd` へ戻します。新表は削除しません。退避DBへの復元は投入後の変更を失います。
+
 ## URL取得の詳細と旧版互換
 
 `ReferenceStore` は `ensureColumn` で `fetch_failure_reason TEXT NULL`、`content_hint TEXT NULL`、`fetch_detail_revision INTEGER NULL`、`fetch_http_status INTEGER NULL` を追加します。最後の列が既にあれば追加しません。初期化で既存行は書き換えません。

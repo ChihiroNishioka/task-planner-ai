@@ -30,7 +30,7 @@ export class MockAiAdapter implements PreparationAdapter {
       markdown: [
         `# ${mockHeading(task.title)}`, '> モック生成。実AIは呼び出していません。',
         ...steps.map((step, index) => `## ${index + 1}. ${mockHeading(step)}\n\n（モック）この手順の内容は実AIでは作成していません。要確認。`),
-        ...(resources.length ? ['## 参考資料', '題名・URL・ファイル名と種類のみを表示しています。本文は反映していません。添付の解析は未実行です。', ...resources] : []),
+        ...(resources.length ? ['## 参考資料', attachments.some(item => item.extractedText) ? '読み取り結果はありますが、モックのため本文には反映していません。' : '題名・URL・ファイル名と種類のみを表示しています。本文は反映していません。添付の解析は未実行です。', ...resources] : []),
         '## 確認事項', '- 内容と事実関係を確認してください。',
       ].join('\n\n'),
       changeSummary: 'モックAIが保存済みの分解に沿ってドラフトを作成しました。',

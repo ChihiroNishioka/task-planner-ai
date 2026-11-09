@@ -1,0 +1,21 @@
+.composer { margin: 20px 0; padding: 20px; border: 1px solid #d9dfe8; border-radius: 16px; background: white; min-width: 0; overflow-wrap: anywhere; }
+.composer h2 { margin: 0 0 12px; }
+.composer p { margin: 12px 0; }
+.composer h3 { margin: 24px 0 16px; }
+.composer button, .choose { min-height: 44px; }
+.composer button { height: auto; white-space: normal; }
+.composer input[type=date] { min-height: 44px; max-width: 100%; box-sizing: border-box; font: inherit; border: 1px solid #aab5c5; border-radius: 8px; padding: 8px; }
+.file { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.choose { display: inline-flex; align-items: center; justify-content: center; padding: 0 16px; border: 1px solid #aab5c5; border-radius: 8px; cursor: pointer; box-sizing: border-box; }
+.file:focus-visible + .choose, .choose:focus, .focus:focus, .error:focus { outline: 3px solid #3764cf; outline-offset: 4px; }
+.filename { word-break: break-word; }
+.mode { padding: 12px; background: #eef3ff; border-radius: 8px; font-weight: 600; }
+.confirm { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; }
+.preview { min-width: 0; }
+.preview img { display: block; width: 100%; height: auto; max-height: 240px; object-fit: contain; border-radius: 8px; background: #f2f4f8; }
+.fields { display: grid; gap: 12px; min-width: 0; }
+.fields > * { min-width: 0; max-width: 100%; }
+.actions { display: flex; gap: 12px; flex-wrap: wrap; }
+.error { padding: 12px; margin: 12px 0; color: #9c2222; background: #fff1f1; border-radius: 8px; }
+.composer [role=status] span { display: block; margin-top: 8px; }
+@media (min-width: 900px) { .confirm { grid-template-columns: 320px minmax(0, 1fr); } }

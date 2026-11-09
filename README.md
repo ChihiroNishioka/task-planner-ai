@@ -145,3 +145,19 @@ webとworkerに同じ環境変数を設定し、両方を再起動してくだ�
 `BLOCKED_URL` の資料は、登録したURLを文字列で残し、リンクにはしません。診断用の解決IPや接続例外、HTTP状態の数値は画面とAPIへ出しません。失敗ログはcode・reason・dnsModeだけを記録します。
 
 本番反映前にDBと付随ファイルを退避してください。追加列は起動時に作成します。設定だけを戻す場合はDNS設定を消して再起動します。コードを旧版へ戻す場合も追加列は残し、DBは復元しません。旧版更新後の詳細理由と本文の注意は、再取得するまで無効になります。
+
+## 画像からタスクを作る
+
+ホームの「画像から作る」でJPEG、PNG、HEICまたはHEIFを1枚選び、「画像を読み取る」を押します。10MiBまで受け付けます。候補のタイトル、期限、説明、メモを確認してから作成します。画像はJPEGに変換し、位置情報を含むメタデータを取り除いて関連資料に保存します。
+
+既定のモックも提案、確認、作成の順で動きます。モックは画像の文字を読み取らず、ファイル名とメモから候補を作ります。実AIは `AI_MODE=cli` と `AI_CLI=claude` のときだけ使用します。codexの画像入力は対象外で、起動せず理由を示してモックへ移ります。AIの読み取りはworkerが行うため、webとworkerを両方起動してください。
+
+AIの抽出文は作成前に編集できます。確認した文を分解とドラフトへ渡し、画像を再解析しません。モックでは抽出文を保存しません。図表から文章に変換されなかった情報は分解とドラフトに渡りません。
+
+画像E2Eは専用データと3410番ポートを使います。実行例は次のとおりです。
+
+```sh
+PW_PORT=3410 E2E_DATA_DIR=/workspace/dev/tp-image-data/e2e-image SHOT_DIR=/workspace/dev/tp-image-runs/shots E2E_OUTPUT_DIR=/workspace/dev/tp-image-runs/playwright-image timeout 10m npx playwright test --config=playwright.image.config.ts
+```
+
+本作業ではブラウザー試験、build、実claude、実機iPhoneを確認していません。実行結果は別の結果ファイルで管理します。libheif-jsはLGPL-3.0です。第三者へDockerイメージなどを配布する場合は、ライセンス上の義務を確認してください。
