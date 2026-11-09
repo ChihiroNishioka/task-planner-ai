@@ -20,6 +20,7 @@
 .reference-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
 .reference-actions button, .reference-panel summary { min-height: 44px; }
 .reference-panel summary { cursor: pointer; display: list-item; padding-top: 10px; }
+.reference-panel section[tabindex="-1"]:focus { outline: 3px solid #397dd1; outline-offset: 3px; }
 .reference-list { list-style: none; padding: 0; display: grid; gap: 14px; }
 .reference-list li { border: 1px solid #ced9e5; border-radius: 10px; padding: 16px; min-width: 0; }
 .reference-list h3 { font-size: 1rem; margin-top: 0; }

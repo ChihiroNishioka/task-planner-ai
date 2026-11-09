@@ -1,25 +1,17 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
-import { join, relative, resolve, sep } from 'node:path';
+import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { expect, test, type APIRequestContext, type Locator, type Page } from '@playwright/test';
 import { z } from 'zod';
 import { breakdownSnapshotSchema } from '../src/domain/breakdown';
+import { requiredDirectory } from './helpers/required-e2e-directory';
 import { buildWorkerEnv, unsafeWebAiEnv } from './helpers/safe-ai-env';
 
 const unsafe = unsafeWebAiEnv(process.env, process.cwd());
 if (unsafe) throw new Error(unsafe);
-function requiredDirectory(name: 'E2E_DATA_DIR' | 'SHOT_DIR', root: string) {
-  const value = process.env[name];
-  if (!value) throw new Error(`${name}を明示してください。`);
-  const path = resolve(value);
-  const child = relative(root, path);
-  if (child === '..' || child.startsWith(`..${sep}`) || child.startsWith(sep)) throw new Error(`${name}は${root}内に限定してください。`);
-  mkdirSync(path, { recursive: true });
-  return path;
-}
-const dataDirectory = requiredDirectory('E2E_DATA_DIR', '/workspace/dev/tp-mid-data');
-const shots = requiredDirectory('SHOT_DIR', '/workspace/dev/tp-mid-runs');
+const dataDirectory = requiredDirectory('E2E_DATA_DIR', process.env.E2E_DATA_ROOT ?? '/workspace/dev/tp-mid-data');
+const shots = requiredDirectory('SHOT_DIR', process.env.E2E_SHOT_ROOT ?? '/workspace/dev/tp-mid-runs');
 const api = (id: string) => `/api/tasks/${id}/breakdown`;
 const generated = '偽CLIが生成した新版を確認する';
 const completion = 'AIが新しい分解版を作成しました。';
@@ -115,6 +107,10 @@ for (const width of [390, 1280]) {
     await expect(comparison).toContainText(generated);
     await expect(comparison).toContainText('v2');
     await expect(comparison).toBeFocused();
+    await expect(comparison).toHaveCSS('outline-style', 'solid');
+    await expect(comparison).toHaveCSS('outline-width', '3px');
+    await expect(comparison).not.toContainText('基準版');
+    await expect(comparison).toContainText('そのあと保存するか、もう一度作り直しを依頼してください。');
     expect((await read(request, id)).versions).toHaveLength(2);
     await capture(page, 'conflict', width);
     await adoptComparison(page, request, id);
@@ -384,4 +380,149 @@ test('ClaudeM1 別画面で完了したタスクの保存409は載せ替えを�
   await expect(editor.getByRole('region', { name: '最新の分解との比較', exact: true })).toHaveCount(0);
   await expect(firstOf(editor)).toHaveValue('完了後も保持する未保存入力');
   await expect(commentOf(editor)).toHaveValue('保持するコメント');
+});
+
+
+for (const width of [390, 1280]) {
+  test(`G-M1-e2e 古い基準版の再生成409から載せ替えて再依頼 ${width}`, async ({ page, request }) => {
+    await page.setViewportSize({ width, height: 844 });
+    const { id, initial } = await seed(request);
+    await page.goto(`/tasks/${id}`);
+    const editor = editorOf(page);
+    await expect(firstOf(editor)).toHaveValue('旧版を読む');
+    expect((await request.post(api(id), { data: { action: 'save', baseVersion: initial.versions.at(-1)!.id, requestKey: randomUUID(), steps: ['別の場所で保存した最新版'] } })).status()).toBe(200);
+    await firstOf(editor).fill('載せ替える入力');
+    await commentOf(editor).fill('載せ替えるコメント');
+    const conflict = page.waitForResponse(response => response.request().method() === 'POST' && response.url().endsWith(api(id)));
+    await editor.getByRole('button', { name: 'このコメントでAIに作り直してもらう', exact: true }).click();
+    expect((await conflict).status()).toBe(409);
+    const comparison = editor.getByRole('region', { name: '最新の分解との比較', exact: true });
+    await expect(comparison).toBeFocused();
+    await expect(comparison).toHaveCSS('outline-style', 'solid');
+    await expect(comparison).toHaveCSS('outline-width', '3px');
+    await expect(comparison).not.toContainText('基準版');
+    await expect(comparison).toContainText('そのあと保存するか、もう一度作り直しを依頼してください。');
+    await expect(comparison).toContainText('別の場所で保存した最新版');
+    await expect(firstOf(editor)).toHaveValue('載せ替える入力');
+    await expect(commentOf(editor)).toHaveValue('載せ替えるコメント');
+    await capture(page, 'regen-conflict', width);
+    await adoptComparison(page, request, id);
+    await expect(editor.getByRole('status').filter({ hasText: '保存するか、もう一度作り直しを依頼してください。' })).toBeVisible();
+    const accepted = page.waitForResponse(response => response.request().method() === 'POST' && response.url().endsWith(api(id)));
+    await editor.getByRole('button', { name: 'このコメントでAIに作り直してもらう', exact: true }).click();
+    expect((await accepted).status()).toBe(202);
+    await expect(editor.getByText('AIが分解を作成中… ワーカーの処理を待っています。', { exact: true })).toBeVisible();
+    const active = (await read(request, id)).jobs.find(job => job.status === 'QUEUED');
+    expect(active?.inputSteps).toEqual(['載せ替える入力']);
+    expect(active?.comment).toBe('載せ替えるコメント');
+    expect((await request.post(api(id), { data: { action: 'cancel', jobId: active!.id, requestKey: randomUUID() } })).status()).toBe(200);
+  });
+
+  for (const terminal of [false, true]) {
+    test(`G-L1-e2e/G-L2-e2e 取消${terminal ? '409' : '成功'}後はヒントを消し全体コメントにフォーカス ${width}`, async ({ page, request }) => {
+      await page.setViewportSize({ width, height: 844 });
+      const { id } = await seed(request);
+      await page.goto(`/tasks/${id}`);
+      await enqueue(page);
+      const editor = editorOf(page);
+      const hint = editor.getByText('取り消すと、作成中のAIの結果は保存されません。入力とコメントはそのまま残ります。', { exact: true });
+      await expect(hint).toBeVisible();
+      await expect(hint).not.toContainText(/CLI|プロセス|強制停止/);
+      if (terminal) {
+        const queued = await read(request, id);
+        // 取消直前の監視応答を保留し、実ジョブ完了と画面操作の競合を再現する。
+        let posted = false;
+        await page.route(`**${api(id)}`, route => {
+          if (!posted && route.request().method() === 'GET') return route.fulfill({ json: queued });
+          posted = true;
+          return route.continue();
+        });
+        const worker = gatedWorker();
+        try { await worker.started(); } finally { worker.release(); await worker.finish(); }
+      }
+      const cancelled = page.waitForResponse(response => response.request().method() === 'POST' && response.url().endsWith(api(id)));
+      await editor.getByRole('button', { name: 'AIの作り直しを取り消す', exact: true }).click();
+      expect((await cancelled).status()).toBe(terminal ? 409 : 200);
+      await expect(commentOf(editor)).toBeFocused();
+      await expect(editor.getByRole('status').filter({ hasText: '作り直しを受け付けました' })).toHaveCount(0);
+      if (terminal) {
+        await expect(editor.locator('[data-app-error="true"]')).not.toContainText('ジョブ');
+        await expect(editor.locator('[data-app-error="true"]')).toContainText('「最新の版を読み込む」で結果を確認できます。');
+      }
+      expect(await page.evaluate(() => document.activeElement === document.body)).toBe(false);
+      await expect(hint).toHaveCount(0);
+      if (!terminal) await expect(editor.getByText('取り消した再生成の入力（1件）', { exact: true })).toBeVisible();
+      await capture(page, terminal ? 'cancel-conflict-focus' : 'cancel-focus', width);
+    });
+  }
+}
+
+test('G-L3-e2e 生成中の手動保存はAI結果を使わない理由を伝えて入力を保持する 390', async ({ page, request }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const { id } = await seed(request);
+  await page.goto(`/tasks/${id}`);
+  await enqueue(page);
+  const editor = editorOf(page);
+  const worker = gatedWorker();
+  try {
+    await worker.started();
+    await firstOf(editor).fill('手動保存した分解');
+    await expect(editor.getByText('AIの作成中に保存すると、作成中のAIの結果は使われません。', { exact: true })).toBeVisible();
+    expect(await save(page)).toBe(200);
+    await firstOf(editor).fill('手動保存後の編集中入力');
+    await commentOf(editor).fill('保持する編集コメント');
+  } finally { worker.release(); await worker.finish(); }
+  await expect(editor.locator('[data-app-error="true"]')).toContainText('AIの作成中に分解かタスクが更新されたため、AIの結果は使いませんでした。');
+  await expect(firstOf(editor)).toHaveValue('手動保存後の編集中入力');
+  await expect(commentOf(editor)).toHaveValue('保持する編集コメント');
+  await expect(editor.getByRole('status').filter({ hasText: '作り直しを受け付けました' })).toHaveCount(0);
+  await editor.getByText('完了しなかった作り直しの入力（1件）', { exact: true }).click();
+  const history = editor.locator('details').filter({ hasText: '完了しなかった作り直しの入力（1件）' });
+  await expect(history.locator('time')).toHaveText(/^\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}$/);
+  await expect(history.getByText('AIの作成中に分解かタスクが更新されたため、AIの結果は使いませんでした。', { exact: true })).toBeVisible();
+  await expect(editor).not.toContainText('CONFLICT');
+  expect((await read(request, id)).jobs[0]?.errorCode).toBe('CONFLICT');
+  await capture(page, 'save-during-generation', 390);
+});
+
+
+test('G-M1-e2e 再生成409後の再取得失敗でも入力とコメントを保持し比較は表示しない', async ({ page, request }) => {
+  const { id, initial } = await seed(request);
+  await page.goto(`/tasks/${id}`);
+  const editor = editorOf(page);
+  await expect(firstOf(editor)).toHaveValue('旧版を読む');
+  expect((await request.post(api(id), { data: { action: 'save', baseVersion: initial.versions.at(-1)!.id, requestKey: randomUUID(), steps: ['別の場所で更新'] } })).status()).toBe(200);
+  await firstOf(editor).fill('読み込み失敗でも残す入力');
+  await commentOf(editor).fill('読み込み失敗でも残すコメント');
+  await page.route(`**${api(id)}`, route => route.request().method() === 'GET'
+    ? route.fulfill({ status: 503, json: {} }) : route.continue());
+  const conflict = page.waitForResponse(response => response.request().method() === 'POST' && response.url().endsWith(api(id)));
+  await editor.getByRole('button', { name: 'このコメントでAIに作り直してもらう', exact: true }).click();
+  expect((await conflict).status()).toBe(409);
+  await expect(editor.locator('[data-app-error="true"]')).toContainText('分解を読み込めませんでした');
+  await expect(firstOf(editor)).toHaveValue('読み込み失敗でも残す入力');
+  await expect(commentOf(editor)).toHaveValue('読み込み失敗でも残すコメント');
+  await expect(editor.getByRole('region', { name: '最新の分解との比較', exact: true })).toHaveCount(0);
+});
+
+test('取消409で進行中が残った場合、完了後にコメント欄へフォーカスを奪わない', async ({ page, request }) => {
+  const { id } = await seed(request);
+  await page.goto(`/tasks/${id}`);
+  await enqueue(page);
+  const editor = editorOf(page);
+  const queued = await read(request, id);
+  const terminal = breakdownSnapshotSchema.parse({ ...queued, jobs: queued.jobs.map(job => ({ ...job, status: 'FAILED', errorCode: 'GENERATION_FAILED' })) });
+  let finished = false;
+  await page.route(`**${api(id)}`, route => route.request().method() === 'POST'
+    ? route.fulfill({ status: 409, json: { code: 'CONFLICT' } })
+    : route.fulfill({ json: finished ? terminal : queued }));
+  await editor.getByRole('button', { name: 'AIの作り直しを取り消す', exact: true }).click();
+  await expect(editor.locator('[data-app-error="true"]')).toContainText('取り消せませんでした');
+  await expect(editor.getByRole('button', { name: 'AIの作り直しを取り消す', exact: true })).toBeEnabled();
+  await firstOf(editor).fill('完了後も操作を続ける入力');
+  await expect(firstOf(editor)).toBeFocused();
+  finished = true;
+  await expect(editor.locator('[data-app-error="true"]')).toContainText('AIの作成に失敗しました。');
+  await expect(firstOf(editor)).toBeFocused();
+  await expect(commentOf(editor)).not.toBeFocused();
 });

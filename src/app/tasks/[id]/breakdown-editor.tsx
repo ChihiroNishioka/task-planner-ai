@@ -7,7 +7,7 @@ import { ThemeContext } from '@astryxdesign/core/theme';
 import { neutralTheme } from '@astryxdesign/theme-neutral/built';
 import '@astryxdesign/core/astryx.css';
 import '@astryxdesign/theme-neutral/theme.css';
-import { breakdownConflictMessage, breakdownSnapshotSchema, breakdownStepsSchema, breakdownVersionLabel, nextBreakdownTracking, type BreakdownSnapshot, type BreakdownTracking, type BreakdownVersion } from '../../../domain/breakdown';
+import { breakdownConflictMessage, breakdownFailureReason, breakdownSnapshotSchema, breakdownStepsSchema, breakdownVersionLabel, nextBreakdownTracking, type BreakdownSnapshot, type BreakdownTracking, type BreakdownVersion } from '../../../domain/breakdown';
 import { modeLabel } from '../../../domain/preparation';
 import styles from './breakdown.module.css';
 import { useServices } from '../../use-services';
@@ -29,6 +29,8 @@ export function BreakdownEditor({ taskId, artifactVersion, disabled }: { taskId:
   const [selected, setSelected] = useState('');
   const [comparison, setComparison] = useState<BreakdownVersion | null>(null);
   const [trackedJob, setTrackedJob] = useState<BreakdownTracking | null>(null);
+  const commentRef = useRef<HTMLTextAreaElement | null>(null);
+  const focusComment = useRef(false);
   const comparisonRef = useRef<HTMLElement | null>(null);
   const editRevision = useRef(0);
   const focusTarget = useRef<string | null>(null);
@@ -86,6 +88,7 @@ export function BreakdownEditor({ taskId, artifactVersion, disabled }: { taskId:
         const nextTracked = nextBreakdownTracking(data, trackedJob, editRevision.current, dirtyRef.current);
         setTrackedJob(nextTracked);
         const job = data.jobs.find((item) => item.id === trackedJob.id);
+        if (!job || !['QUEUED', 'RUNNING'].includes(job.status)) setNotice('');
         if (job?.status === 'SUCCEEDED') {
           const changed = trackedJob.preserveInput || trackedJob.revision !== editRevision.current || Boolean(nextTracked);
           if (!changed) adopt(data);
@@ -100,7 +103,7 @@ export function BreakdownEditor({ taskId, artifactVersion, disabled }: { taskId:
           setNotice('AIの作り直しを取り消しました。');
         }
         if (job?.status === 'FAILED') {
-          setError(`AIの作り直しに失敗しました（${job.errorCode ?? '不明'}）。編集中の内容は保持しています。`);
+          setError(`${breakdownFailureReason(job.errorCode)}編集中の内容は保持しています。`);
         }
       }).catch(() => { if (!cancelled) setWatchError('AIの状態を取得できません。入力は保持しています。'); });
     }, 1500);
@@ -127,16 +130,24 @@ export function BreakdownEditor({ taskId, artifactVersion, disabled }: { taskId:
   useEffect(() => {
     if (focusTarget.current) { document.getElementById(focusTarget.current)?.focus(); focusTarget.current = null; }
   }, [steps]);
+  useEffect(() => {
+    if (!locked && focusComment.current) {
+      focusComment.current = false;
+      if (!pending) commentRef.current?.focus();
+    }
+  }, [locked, pending]);
   function markEdited() { editRevision.current += 1; setDirty(true); dirtyRef.current = true; }
   function edit(next: string[]) { setSteps(next); markEdited(); setNotice('未保存の変更があります。'); }
   function recover(job: BreakdownSnapshot['jobs'][number]) {
-    const label = job.status === 'CANCELLED' ? '取り消した入力' : '失敗した入力';
+    focusComment.current = false;
+    const label = job.status === 'CANCELLED' ? '取り消した入力' : '完了しなかった作り直しの入力';
     if (dirtyRef.current && !window.confirm(`編集中の内容を破棄して${label}を編集に戻しますか？`)) return;
     setSteps(job.inputSteps); setComment(job.comment); setBaseVersion(snapshot?.versions.at(-1)?.id ?? null);
     setDeleted(null); setComparison(null); retry.current = null; markEdited(); setError('');
     setNotice(`${label}を編集に戻しました。最新の版との差分を確認して保存してください。`);
   }
   async function reload() {
+    focusComment.current = false;
     if (dirtyRef.current && !window.confirm('未保存の変更を破棄して最新の分解を読み込みますか？')) return;
     setLoading(true); setError(''); setWatchError('');
     try { const data = await read(); editRevision.current += 1; retry.current = null; setSnapshot(data); hydrate(data); setNotice('最新の分解を読み込みました。'); }
@@ -144,8 +155,10 @@ export function BreakdownEditor({ taskId, artifactVersion, disabled }: { taskId:
     finally { setLoading(false); }
   }
   async function submit(action: 'save' | 'regenerate' | 'restore' | 'cancel') {
+    focusComment.current = false;
     if (locked || (action === 'regenerate' && pending)) return;
     setError('');
+    if (action === 'cancel') setNotice('');
     if ((action === 'save' || action === 'regenerate') && !breakdownStepsSchema.safeParse(steps).success) { setError('各項目は1〜300字、最大50件で入力してください。'); return; }
     if (action === 'regenerate' && (!comment.trim() || comment.trim().length > 20_000)) { setError('全体コメントを1〜20000字で入力してください。'); return; }
     if (action === 'restore' && dirtyRef.current && !window.confirm('未保存の変更を破棄して、この版を新しい版として復元しますか？')) return;
@@ -163,7 +176,8 @@ export function BreakdownEditor({ taskId, artifactVersion, disabled }: { taskId:
         setComparison(null);
         const latest = await read();
         const job = action === 'cancel' ? latest.jobs.find(item => item.id === command.jobId) : undefined;
-        const explanation = breakdownConflictMessage(failure.code, action, job?.status);
+        const explanation = breakdownConflictMessage(failure.code, action, { snapshot: latest, baseVersion, jobId: job?.id });
+        if (action === 'cancel') focusComment.current = !latest.jobs.some(item => item.status === 'QUEUED' || item.status === 'RUNNING');
         setError(explanation.message);
         setSnapshot(latest); setWatchError('');
         setComparison(explanation.compare ? latest.versions.at(-1) ?? null : null);
@@ -174,6 +188,7 @@ export function BreakdownEditor({ taskId, artifactVersion, disabled }: { taskId:
       const data = breakdownSnapshotSchema.parse(await response.json());
       setSnapshot(data); retry.current = null;
       if (action === 'cancel') {
+        focusComment.current = !data.jobs.some(item => item.status === 'QUEUED' || item.status === 'RUNNING');
         setTrackedJob(previous => nextBreakdownTracking(data, previous, editRevision.current, dirtyRef.current));
         setWatchError('');
         setNotice('AIの作り直しを取り消しました。');
@@ -222,26 +237,28 @@ export function BreakdownEditor({ taskId, artifactVersion, disabled }: { taskId:
         </div>
       </li>)}</ol>
       <div className={styles.actions}><Button id="breakdown-add" label="項目を追加" isDisabled={locked || steps.length >= 50} onClick={() => { focusTarget.current = `breakdown-step-${steps.length}`; edit([...steps, '']); }} /><Button label={busy ? '保存中…' : 'ユーザー編集版を保存'} variant="primary" isDisabled={locked || !dirty} onClick={() => void submit('save')} /></div>
+      {pending ? <p className={styles.hint}>AIの作成中に保存すると、作成中のAIの結果は使われません。</p> : null}
       {deleted ? <Button label="削除を取り消す" isDisabled={locked} onClick={undoDelete} /> : null}
       {current?.mode === 'mock_fallback' ? <p className={styles.warning} data-mode="mock_fallback">{modeLabel(current.mode, current.fallbackReason)}。実AIでは再生成せず、入力項目を保持しています。理由コード {current.fallbackReason}</p> : null}
-      <div className={styles.comment}><label htmlFor="breakdown-comment">全体コメント</label><textarea id="breakdown-comment" rows={3} maxLength={20000} value={comment} disabled={locked} onChange={(event) => { setComment(event.target.value); markEdited(); }} placeholder="どのように手順を直したいですか" /><p className={styles.hint}>未保存の現在のリストとこのコメントをAIに渡します。</p><p className={styles.hint}>AIワーカー {workerLabel ?? (serviceError ? '状態を確認できません' : '確認中…')}</p><Button label="このコメントでAIに作り直してもらう" variant="primary" isDisabled={locked || pending || !comment.trim()} onClick={() => void submit('regenerate')} /></div>
+      <div className={styles.comment}><label htmlFor="breakdown-comment">全体コメント</label><textarea ref={commentRef} id="breakdown-comment" rows={3} maxLength={20000} value={comment} disabled={locked} onChange={(event) => { setComment(event.target.value); markEdited(); }} placeholder="どのように手順を直したいですか" /><p className={styles.hint}>未保存の現在のリストとこのコメントをAIに渡します。</p><p className={styles.hint}>AIワーカー {workerLabel ?? (serviceError ? '状態を確認できません' : '確認中…')}</p><Button label="このコメントでAIに作り直してもらう" variant="primary" isDisabled={locked || pending || !comment.trim()} onClick={() => void submit('regenerate')} /></div>
       {pending ? <><p role="status">AIが分解を作成中… ワーカーの処理を待っています。</p><Button label="AIの作り直しを取り消す" isDisabled={locked} onClick={() => void submit('cancel')} /></> : null}
-      {pending || snapshot?.jobs.some((job) => job.status === 'CANCELLED') ? <p className={styles.hint}>取消は生成結果の保存を止めます。実行中のCLIプロセスは強制停止せず、完了後の結果を破棄します。</p> : null}
+      {pending ? <p className={styles.hint}>取り消すと、作成中のAIの結果は保存されません。入力とコメントはそのまま残ります。</p> : null}
       {comparison ? <section ref={comparisonRef} tabIndex={-1} className={styles.history} aria-label="最新の分解との比較">
         <h3>最新の分解との比較</h3>
         <p>{breakdownVersionLabel(comparison)}</p>
-        <p>上の項目と全体コメントは現在の入力です。以下の最新の版を確認し、基準版だけを載せ替えてから保存してください。</p>
+        <p>上の項目と全体コメントは現在の入力です。下の最新の版を確認して「現在の入力を最新の版に載せ替える」を押し、そのあと保存するか、もう一度作り直しを依頼してください。</p>
         <ol>{comparison.steps.map((step, index) => <li key={index}>{step}</li>)}</ol>
         {comparison.comment ? <p>最新の全体コメント {comparison.comment}</p> : null}
         <Button label="現在の入力を最新の版に載せ替える" isDisabled={locked} onClick={() => {
           setBaseVersion(comparison.id); setComparison(null); retry.current = null; markEdited(); setError('');
-          setNotice(`現在の入力をv${comparison.number}に載せ替えました。内容を確認してユーザー編集版を保存してください。`);
+          setNotice(`現在の入力をv${comparison.number}に載せ替えました。内容を確認して保存するか、もう一度作り直しを依頼してください。`);
         }} />
       </section> : null}
-      {failedJobs.length ? <details className={styles.history}><summary>失敗した再生成の入力（{failedJobs.length}件）</summary>{failedJobs.map((job, index) => <div key={job.id}>
-        <p>失敗入力{index + 1}・{job.errorCode}・{job.createdAt}</p>
+      {failedJobs.length ? <details className={styles.history}><summary>完了しなかった作り直しの入力（{failedJobs.length}件）</summary>{failedJobs.map((job, index) => <div key={job.id}>
+        <p>未完了入力{index + 1}</p><p>{breakdownFailureReason(job.errorCode)}</p>
+        <p><time dateTime={job.createdAt}>{new Date(job.createdAt).toLocaleString('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })}</time></p>
         <ol>{job.inputSteps.map((step, i) => <li key={i}>{step}</li>)}</ol><p>全体コメント {job.comment}</p>
-        <Button label={`失敗入力${index + 1}を編集に戻す`} isDisabled={locked} onClick={() => recover(job)} />
+        <Button label={`未完了入力${index + 1}を編集に戻す`} isDisabled={locked} onClick={() => recover(job)} />
       </div>)}</details> : null}
       {cancelledJobs.length ? <details className={styles.history}><summary>取り消した再生成の入力（{cancelledJobs.length}件）</summary>{cancelledJobs.map((job, index) => <div key={job.id}>
         <p>取消入力{index + 1}・{job.createdAt}</p>

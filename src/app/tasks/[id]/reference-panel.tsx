@@ -28,12 +28,29 @@ export function ReferencePanel({ taskId, children }: { taskId: string; children:
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [error, setError] = useState('');
+  const [noteError, setNoteError] = useState('');
   const [message, setMessage] = useState('');
   const [pending, setPending] = useState(false);
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [url, setUrl] = useState('');
   const [editor, setEditor] = useState<Editor>({ kind: 'new' });
+  const [noteConflict, setNoteConflict] = useState<string | null>(null);
+  const noteConflictRef = useRef<string | null>(null);
+  const latestNote = noteConflict && !loading && !loadError ? references.find(item => item.id === noteConflict && item.kind === 'NOTE') : undefined;
+  const noteComparisonRef = useRef<HTMLElement | null>(null);
+  const focusedNoteConflict = useRef<string | null>(null);
+  const latestNoteId = latestNote?.id;
+  const latestNoteRevision = latestNote?.revision;
+  useEffect(() => {
+    if (!noteConflict) focusedNoteConflict.current = null;
+    if (!latestNoteId || latestNoteRevision === undefined) return;
+    const key = JSON.stringify([latestNoteId, latestNoteRevision]);
+    if (focusedNoteConflict.current !== key) {
+      focusedNoteConflict.current = key;
+      noteComparisonRef.current?.focus();
+    }
+  }, [noteConflict, latestNoteId, latestNoteRevision]);
   const activeLoad = useRef(0);
   const monitoring = useRef(true);
   const mutating = useRef(false);
@@ -47,6 +64,13 @@ export function ReferencePanel({ taskId, children }: { taskId: string; children:
       const data = listSchema.parse(await response.json());
       if (!cancelled() && activeLoad.current === attempt) {
         setReferences(data.references); setLoadError('');
+        const conflictId = noteConflictRef.current;
+        if (conflictId && !data.references.some(item => item.id === conflictId && item.kind === 'NOTE')) {
+          saveOperations.current.delete('note');
+          noteConflictRef.current = null; setNoteConflict(null);
+          setEditor({ kind: 'new' });
+          setNoteError('このメモは削除されました。保存すると新しいメモとして追加します。');
+        }
         monitoring.current = data.references.some(item => item.kind === 'URL' && item.fetchStatus === 'FETCHING');
       }
     } catch (cause) {
@@ -66,7 +90,7 @@ export function ReferencePanel({ taskId, children }: { taskId: string; children:
     return () => { cancelled = true; clearTimeout(timer); activeLoad.current += 1; };
   }, [load]);
 
-  function resetNote() { saveOperations.current.delete('note'); setTitle(''); setBody(''); setEditor({ kind: 'new' }); }
+  function resetNote() { saveOperations.current.delete('note'); setTitle(''); setBody(''); setEditor({ kind: 'new' }); noteConflictRef.current = null; setNoteConflict(null); setNoteError(''); }
   async function mutate(path: string, method: string, data?: unknown, operation?: string) {
     activeLoad.current += 1;
     mutating.current = true;
@@ -75,12 +99,31 @@ export function ReferencePanel({ taskId, children }: { taskId: string; children:
     const previous = operation ? saveOperations.current.get(operation) : undefined;
     const key = previous?.signature === signature ? previous.key : crypto.randomUUID();
     if (operation) saveOperations.current.set(operation, { signature, key });
-    setPending(true); setError(''); setMessage('');
+    const showError = operation === 'note' ? setNoteError : setError;
+    setPending(true); showError(''); setMessage('');
     try {
       const response = await fetch(path, {
         method, headers: { 'content-type': 'application/json', 'idempotency-key': key },
         body: data === undefined ? undefined : JSON.stringify(data),
       });
+      if (operation === 'note' && method === 'PATCH' && editor.kind === 'edit') {
+        if (response.status === 409) {
+          setLoading(true);
+          noteConflictRef.current = editor.id; setNoteConflict(editor.id);
+          setNoteError('別の場所でメモが更新されました。入力を保持しています。最新のメモと比較して載せ替えてから、もう一度保存してください。');
+          await load();
+          return false;
+        }
+        if (response.status === 404) {
+          saveOperations.current.delete('note');
+          noteConflictRef.current = null; setNoteConflict(null);
+          setEditor({ kind: 'new' });
+          setReferences(current => current.filter(item => item.id !== editor.id));
+          setNoteError('このメモは削除されました。保存すると新しいメモとして追加します。');
+          await load();
+          return false;
+        }
+      }
       if (!response.ok) throw new Error(apiErrors[response.status] ?? '資料を保存できませんでした。もう一度お試しください。');
       if (response.status === 204) {
         setReferences(current => current.filter(item => `${endpoint}/${item.id}` !== path));
@@ -92,7 +135,7 @@ export function ReferencePanel({ taskId, children }: { taskId: string; children:
       await load();
       return true;
     } catch (cause) {
-      setError(cause instanceof Error && (Object.values(apiErrors).includes(cause.message) || cause.message.startsWith('資料を保存')) ? cause.message : '資料を保存できませんでした。もう一度お試しください。');
+      showError(cause instanceof Error && (Object.values(apiErrors).includes(cause.message) || cause.message.startsWith('資料を保存')) ? cause.message : '資料を保存できませんでした。もう一度お試しください。');
       return false;
     } finally { mutating.current = false; setPending(false); }
   }
@@ -121,11 +164,20 @@ export function ReferencePanel({ taskId, children }: { taskId: string; children:
     {loading ? <p role="status">資料を読み込み中…</p> : null}
     {loadError ? <div className="error" data-ref-error role="alert"><p>{loadError}</p><button type="button" className="secondary-button" disabled={loading || pending} onClick={() => { setLoading(true); void load(); }}>資料を再読み込み</button></div> : null}
     {error ? <p className="error" data-ref-error role="alert">{error}</p> : null}
+    {noteError ? <p className="error" data-ref-error role="alert">{noteError}</p> : null}
     <p role="status" aria-live="polite">{message}</p>
     <div id="ref-panel-1" role="tabpanel" aria-labelledby="ref-tab-1" hidden={tab !== 'メモ'}>
-      <form onSubmit={saveNote} className="reference-form"><TextInput controlClassName="reference-input-control" id="reference-note-title" label="メモの題名（任意）" value={title} onChange={value => { const next = value.slice(0, referenceLimits.noteTitle); if (next !== title) saveOperations.current.delete('note'); setTitle(next); }} isDisabled={pending} /><TextArea id="reference-note-body" label="メモの本文" value={body} maxLength={referenceLimits.noteBody} rows={6} isRequired onChange={value => { if (value !== body) saveOperations.current.delete('note'); setBody(value); }} isDisabled={pending} aria-describedby="reference-note-remaining" /><p id="reference-note-remaining">あと{referenceLimits.noteBody - body.length}文字</p><div className="reference-actions"><button className="secondary-button" disabled={pending || loading || !!loadError || !body.trim()}>{pending ? '保存中…' : editor.kind === 'edit' ? '変更を保存' : 'メモを保存'}</button>{editor.kind === 'edit' ? <button type="button" className="secondary-button" disabled={pending} onClick={resetNote}>編集をやめる</button> : null}</div></form>
+      {latestNote ? <section ref={noteComparisonRef} tabIndex={-1} role="region" aria-label="最新のメモ" className="input-section reference-list"><h3>最新のメモ</h3><h4 className="reference-body">{latestNote.title || '題名のないメモ'}</h4><p className="reference-body">{latestNote.body}</p><div className="reference-actions"><button type="button" className="secondary-button" disabled={pending} onClick={() => {
+        saveOperations.current.delete('note');
+        setEditor({ kind: 'edit', id: latestNote.id, revision: latestNote.revision });
+        noteConflictRef.current = null; setNoteConflict(null);
+        setNoteError('');
+        setMessage('入力中の内容を最新のメモに載せ替えました。内容を確認して保存してください。');
+        document.getElementById('reference-note-body')?.focus();
+      }}>入力中の内容を最新のメモに載せ替える</button></div></section> : null}
+      <form onSubmit={saveNote} className="reference-form"><TextInput controlClassName="reference-input-control" id="reference-note-title" label="メモの題名（任意）" value={title} onChange={value => { const next = value.slice(0, referenceLimits.noteTitle); if (next !== title) saveOperations.current.delete('note'); setTitle(next); }} isDisabled={pending} /><TextArea id="reference-note-body" label="メモの本文" value={body} maxLength={referenceLimits.noteBody} rows={6} isRequired onChange={value => { if (value !== body) saveOperations.current.delete('note'); setBody(value); }} isDisabled={pending} aria-describedby="reference-note-remaining" /><p id="reference-note-remaining">あと{referenceLimits.noteBody - body.length}文字</p><div className="reference-actions"><button className="secondary-button" disabled={pending || loading || !!loadError || !!noteConflict || !body.trim()}>{pending ? '保存中…' : editor.kind === 'edit' ? '変更を保存' : 'メモを保存'}</button>{editor.kind === 'edit' ? <button type="button" className="secondary-button" disabled={pending} onClick={resetNote}>編集をやめる</button> : null}</div></form>
       {!loading && !loadError && !references.some(item => item.kind === 'NOTE') ? <p>メモはまだありません。</p> : null}
-      <ul className="reference-list">{references.filter(item => item.kind === 'NOTE').map(item => <li key={item.id} data-reference-kind="NOTE"><h3>{item.title || '題名のないメモ'}</h3><p className="reference-body">{item.body}</p><div className="reference-actions"><button type="button" className="secondary-button" disabled={pending} onClick={() => { saveOperations.current.delete('note'); setEditor({ kind: 'edit', id: item.id, revision: item.revision }); setTitle(item.title); setBody(item.body); document.getElementById('reference-note-body')?.focus(); }}>編集</button><button type="button" className="secondary-button" disabled={pending} onClick={() => void remove(item)}>削除</button></div></li>)}</ul>
+      <ul className="reference-list">{references.filter(item => item.kind === 'NOTE').map(item => <li key={item.id} data-reference-kind="NOTE"><h3>{item.title || '題名のないメモ'}</h3><p className="reference-body">{item.body}</p><div className="reference-actions"><button type="button" className="secondary-button" disabled={pending} onClick={() => { saveOperations.current.delete('note'); noteConflictRef.current = null; setNoteConflict(null); setNoteError(''); setEditor({ kind: 'edit', id: item.id, revision: item.revision }); setTitle(item.title); setBody(item.body); document.getElementById('reference-note-body')?.focus(); }}>編集</button><button type="button" className="secondary-button" disabled={pending} onClick={() => void remove(item)}>削除</button></div></li>)}</ul>
     </div>
     <div id="ref-panel-2" role="tabpanel" aria-labelledby="ref-tab-2" hidden={tab !== 'URL'}>
       <form onSubmit={saveUrl} className="reference-form"><TextInput controlClassName="reference-input-control" id="reference-url" label="関連するURL" type="url" isRequired inputMode="url" value={url} placeholder="https://example.com/" onChange={value => { const next = value.slice(0, referenceLimits.url); if (next !== url) saveOperations.current.delete('url'); setUrl(next); }} isDisabled={pending} /><p>公開ページのタイトルと本文をサーバーで取得します。取得に失敗してもURLは保存されます。</p><button className="secondary-button" disabled={pending || loading || !!loadError || !url.trim()}>{pending ? '取得中…' : 'URLを追加'}</button></form>
