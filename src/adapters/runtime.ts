@@ -1,3 +1,8 @@
+import { ImageProposalStore } from './image-proposal-store';
+import { createImageProposalApi } from './image-proposal-api';
+import { createImageProposalAi } from './image-proposal-ai';
+import { describeWorker } from './worker-status';
+import { resolveAiTimeoutMs } from './cli-ai';
 import { ReferenceStore } from './reference-store';
 import { createReferenceFetcherFromEnv } from './reference-fetcher';
 import { createReferenceApi } from './reference-api';
@@ -21,6 +26,7 @@ const databasePath = resolve(process.env.DATABASE_PATH || 'data/task-planner.sql
 mkdirSync(dirname(databasePath), { recursive: true });
 
 declare global {
+  var __imageProposalStore: ImageProposalStore | undefined;
   var __referenceStore: ReferenceStore | undefined;
   var __breakdownStore: BreakdownStore | undefined;
   var __taskStore: TaskStore | undefined;
@@ -51,3 +57,7 @@ export const workerStatusStore = globalThis.__workerStatusStore ??= new WorkerSt
 
 export const breakdownStore = globalThis.__breakdownStore ??= new BreakdownStore(databasePath);
 export const draftFlowStore = globalThis.__draftFlowStore ??= new DraftFlowStore(databasePath, resolve(process.env.ARTIFACT_DIRECTORY || 'data/artifacts'));
+
+export const imageProposalStore = globalThis.__imageProposalStore ??= new ImageProposalStore(databasePath, resolve(process.env.BLOB_DIRECTORY || 'data/blobs'), {tasks: taskStore, inputs: inputStore, workerState: () => describeWorker(workerStatusStore.read()).state, aiTimeoutMs: resolveAiTimeoutMs(), workerGraceMs: Number(process.env.IMAGE_WORKER_GRACE_MS) || 20_000, queueNoticeMs: Number(process.env.IMAGE_QUEUE_NOTICE_MS) || 300_000});
+export const imageProposalAi = createImageProposalAi();
+export const imageProposalApi = createImageProposalApi({store: imageProposalStore,tasks:taskStore,inputs:inputStore,blobDirectory:resolve(process.env.BLOB_DIRECTORY || 'data/blobs')});

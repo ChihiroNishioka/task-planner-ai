@@ -128,3 +128,19 @@ timeout 10m env TMPDIR=/workspace/dev/tp-ref-data/tmp E2E_DATA_DIR=/workspace/de
 DB配置先とTMPDIRはあらかじめ作成します。E2Eでは手動検証や既存利用のDBディレクトリを指定しません。汎用の `playwright.config.ts` は既定の相対パスとポートを使います。関連資料専用設定は検証環境を隔離するガードとして3350とtp-ref-data配下を必須にし、fixtureだけ3351を使います。
 
 分解編集と参考資料のAI入力、専用DBでの検証手順は [分解編集と関連資料の統合検証](docs/REFERENCE_INTEGRATION.md) を参照してください。
+
+## 画像からタスクを作る
+
+ホームの「画像から作る」でJPEG、PNG、HEICまたはHEIFを1枚選び、「画像を読み取る」を押します。10MiBまで受け付けます。候補のタイトル、期限、説明、メモを確認してから作成します。画像はJPEGに変換し、位置情報を含むメタデータを取り除いて関連資料に保存します。
+
+既定のモックも提案、確認、作成の順で動きます。モックは画像の文字を読み取らず、ファイル名とメモから候補を作ります。実AIは `AI_MODE=cli` と `AI_CLI=claude` のときだけ使用します。codexの画像入力は対象外で、起動せず理由を示してモックへ移ります。AIの読み取りはworkerが行うため、webとworkerを両方起動してください。
+
+AIの抽出文は作成前に編集できます。確認した文を分解とドラフトへ渡し、画像を再解析しません。モックでは抽出文を保存しません。図表から文章に変換されなかった情報は分解とドラフトに渡りません。
+
+画像E2Eは専用データと3410番ポートを使います。実行例は次のとおりです。
+
+```sh
+PW_PORT=3410 E2E_DATA_DIR=/workspace/dev/tp-image-data/e2e-image SHOT_DIR=/workspace/dev/tp-image-runs/shots E2E_OUTPUT_DIR=/workspace/dev/tp-image-runs/playwright-image timeout 10m npx playwright test --config=playwright.image.config.ts
+```
+
+本作業ではブラウザー試験、build、実claude、実機iPhoneを確認していません。実行結果は別の結果ファイルで管理します。libheif-jsはLGPL-3.0です。第三者へDockerイメージなどを配布する場合は、ライセンス上の義務を確認してください。

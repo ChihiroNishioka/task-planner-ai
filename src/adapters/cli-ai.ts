@@ -80,9 +80,13 @@ export function runCli(prompt: string, options: RunCliOptions): Promise<string> 
 }
 
 /** 環境変数から実CLIのランナーを作る。AI_CLI=claude（既定）または codex。 */
+export function resolveAiTimeoutMs(env: Env = process.env): number {
+  return Math.min(Math.max(Number(env.AI_TIMEOUT_MS) || 120_000, 1_000), 600_000);
+}
+
 export function createCliRunnerFromEnv(env: Env = process.env): CliRunner {
   const kind = env.AI_CLI === 'codex' ? 'codex' : 'claude';
-  const timeoutMs = Math.min(Math.max(Number(env.AI_TIMEOUT_MS) || 120_000, 1_000), 600_000);
+  const timeoutMs = resolveAiTimeoutMs(env);
   const model = /^[A-Za-z0-9._-]{1,64}$/.test(env.AI_CLI_MODEL ?? '') ? env.AI_CLI_MODEL : undefined;
   return async (prompt) => {
     const workdir = mkdtempSync(join(tmpdir(), 'task-planner-ai-'));
@@ -162,7 +166,7 @@ export function buildRevisePrompt(task: Task, previousContent: string, feedback:
   ].join('\n');
 }
 
-function parseCliJson(raw: string): unknown {
+export function parseCliJson(raw: string): unknown {
   if (Buffer.byteLength(raw) > MAX_OUTPUT_BYTES) throw new CliAiError('INVALID_OUTPUT');
   const start = raw.indexOf('{');
   const end = raw.lastIndexOf('}');

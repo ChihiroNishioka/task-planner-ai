@@ -1,3 +1,5 @@
+import { normalizeImage } from '../../../../../adapters/image-normalizer';
+import { resolve } from 'node:path';
 import { NextResponse } from 'next/server';
 import { inputStore } from '../../../../../adapters/runtime';
 import type { NewInput } from '../../../../../adapters/input-store';
@@ -20,12 +22,17 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     if (!rawFiles.every((value): value is File => value instanceof File)) {
       return NextResponse.json({ error: '添付ファイルを確認してください。' }, { status: 422 });
     }
-    const inputs: NewInput[] = await Promise.all(rawFiles.map(async (file) => ({
-      type: file.type.startsWith('image/') ? 'IMAGE' : file.type === 'application/pdf' ? 'PDF' : 'AUDIO',
-      mime: file.type,
-      name: file.name,
-      bytes: Buffer.from(await file.arrayBuffer()),
-    })));
+    const inputs: NewInput[] = [];
+    for (const file of rawFiles) {
+      const bytes = Buffer.from(await file.arrayBuffer());
+      const image = file.type.startsWith('image/') || /\.(heic|heif|jpe?g|png)$/i.test(file.name);
+      if (image) {
+        const normalized = await normalizeImage({bytes,mime:file.type,name:file.name},resolve(process.env.BLOB_DIRECTORY || 'data/blobs'));
+        inputs.push({type:'IMAGE',mime:'image/jpeg',name:normalized.name,bytes:normalized.bytes});
+        continue;
+      }
+      inputs.push({type:file.type === 'application/pdf' ? 'PDF' : 'AUDIO',mime:file.type,name:file.name,bytes});
+    }
     const saved = inputStore.addBatch(id, inputs, request.headers.get('idempotency-key') ?? undefined);
     return NextResponse.json({ inputs: saved.map(publicInput) }, { status: 201 });
   } catch (error) {

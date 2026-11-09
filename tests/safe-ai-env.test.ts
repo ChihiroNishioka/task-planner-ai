@@ -30,4 +30,15 @@ describe('E2E用の安全なAI環境', () => {
     expect(() => buildWorkerEnv({}, { AI_MODE: 'cli', AI_CLI_PATH: '/usr/bin/claude' }, root)).toThrow();
     expect(() => buildWorkerEnv({}, { AI_MODE: 'cli' }, root)).toThrow();
   });
+  it.each(['fake-image-cli.mjs', 'fake-image-gate-cli.mjs'])('S5 画像用の偽CLI %s をWebとworkerで許可する', (filename) => {
+    const path = join(root, 'tests', 'fixtures', filename);
+    const extra = { AI_MODE: 'cli', AI_CLI_PATH: path };
+    expect(unsafeWebAiEnv(extra, root)).toBeNull();
+    expect(buildWorkerEnv({}, extra, root)).toMatchObject(extra);
+  });
+  it('S6 偽CLIと同名でも許可したディレクトリ外なら拒否する', () => {
+    const extra = { AI_MODE: 'cli', AI_CLI_PATH: '/usr/bin/fake-image-cli.mjs' };
+    expect(unsafeWebAiEnv(extra, root)).toMatch(/実CLI/);
+    expect(() => buildWorkerEnv({}, extra, root)).toThrow();
+  });
 });

@@ -46,3 +46,15 @@ API入口で入力をZod検証します。APIはセッションを検証しま�
 `feat/breakdown-edit` と共有する接点は既存adapterの任意context引数とruntimeでの装飾です。パネルとAI参考データ構築は別モジュールに置き、タスク分解の編集UIを変更しません。adapterメソッドを追加する際は装飾側の委譲も確認します。
 
 単体テストはDNSと接続ストリームを注入し、外部ネットワークへ接続しません。fixtureモードは開発時のみ許可し、検証済みのexample.com宛て接続を固定の127.0.0.1:3351へ差し替えます。本番モードではfixture設定を拒否します。fixtureでの成功とliveの実サイト成功、未実施の画面検証を分けて記録します。
+
+## 画像からの提案
+
+ホームの `ImageTaskComposer` は画像を選択してから明示操作でmultipartを送ります。APIはセッション、Origin、実受信量、multipart項目を順に検証します。新しい6エンドポイントはproxyに加えてhandlerでも認証します。
+
+`image-normalizer` はヘッダーの画素数を確認し、隔離したNode子プロセスでデコード、向き補正、縮小、白背景合成、JPEG再生成を行います。30秒制限とRSS監視で子孫プロセスを停止します。Linuxの `/proc` を使います。秘密を除いた環境変数だけを子へ渡します。
+
+`ImageProposalStore` はSQLiteでジョブと作成状態を管理します。workerはループ先頭で画像1件を実行し、既存の分解やドラフト処理を続けます。heartbeatが正常なら待ち時間だけでは失敗にせず、300秒後に順番待ちを案内します。実行lease切れやworker停止時は理由付きモック候補へ回収します。
+
+`image-proposal-ai` はclaudeにstream-jsonの画像ブロックと文章ブロックをstdinで渡します。ツールを無効にし、stdoutにtool_useがあれば結果を拒否します。画像とメモはデータとして引用します。実AIの失敗、未対応CLI、既定モックを区別します。
+
+作成時に確認した抽出文は `InputStore.list`、`withReferences`、`AttachmentContext` の順で初回分解、分解編集、ドラフト作成、ドラフト改訂へ渡します。文を含まない添付のプロンプトは従来のままです。
