@@ -12,6 +12,7 @@ import { DraftFlowStore } from '../src/adapters/draft-flow-store';
 import { draftHandlers } from '../src/adapters/draft-api';
 import { MockAiAdapter } from '../src/adapters/mock-ai';
 import { ReferenceStore } from '../src/adapters/reference-store';
+import { InputStore } from '../src/adapters/input-store';
 import { CliAiAdapter } from '../src/adapters/cli-ai';
 import { withReferences } from '../src/adapters/with-references';
 import { GET as artifacts } from '../src/app/api/tasks/[id]/artifacts/route';
@@ -175,4 +176,25 @@ it('成果物APIは版ごとの作成経路を返し記録のない旧版はnull
   const before = rows();
   expect(await readArtifacts()).toMatchObject([{ source: null }, { source: null }, { source: null }]);
   expect(rows()).toEqual(before);
+});
+
+it('DF-A07 関連資料の有無はメモ・URL・添付から読み取りタスク間で混ぜない', async () => {
+  const { task } = fixture(); const other = fixture();
+  const references = new ReferenceStore(join(dir, 'db.sqlite'));
+  const inputs = new InputStore(join(dir, 'db.sqlite'), join(dir, 'blobs'));
+  const read = async () => (await (await request(task.id)).json()).hasRelatedMaterials;
+  try {
+    references.add(other.task.id, { kind: 'NOTE', body: '別タスクのメモ' });
+    expect(await read()).toBe(false);
+    for (const reference of [{ kind: 'NOTE', body: '関連するメモ' }, { kind: 'URL', url: 'https://example.com/material' }]) {
+      const added = references.add(task.id, reference);
+      const before = rows();
+      expect(await read()).toBe(true); expect(rows()).toEqual(before);
+      references.remove(task.id, added.id);
+      expect(await read()).toBe(false);
+    }
+    inputs.addBatch(task.id, [{ type: 'PDF', mime: 'application/pdf', name: '合成資料.pdf', bytes: Buffer.from('%PDF-合成') }]);
+    const before = rows();
+    expect(await read()).toBe(true); expect(rows()).toEqual(before);
+  } finally { inputs.close(); references.close(); }
 });

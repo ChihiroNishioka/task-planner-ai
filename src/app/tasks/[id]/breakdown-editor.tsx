@@ -275,9 +275,9 @@ export function BreakdownEditor({ taskId, artifactVersion, disabled, onLatestVer
         {history ? <div aria-label="過去の分解"><p>{breakdownVersionLabel(history)}</p>{history.steps.length ? <ol>{history.steps.map((step, i) => <li key={i}>{step}</li>)}</ol> : <p>項目はありません。</p>}{history.comment ? <p>全体コメント {history.comment}</p> : null}<Button label="この版を復元" isDisabled={locked} onClick={() => void submit('restore')} /></div> : null}
       </details>
     </>}
-    <DraftFlowPanel taskId={taskId} dirty={dirty} disabled={disabled} savedVersionId={snapshot?.versions.at(-1)?.id ?? null} onLatestVersion={id => { if (trackedJob || id === latestVersionId) return; setFlowVersion(current => current === id ? current : id); }} />
     <p role="status">{notice}</p>
     {error || watchError ? <p className={styles.warning} role="alert" data-app-error="true">{error}{watchError}</p> : null}
     <Button label={loading ? '読み込み中…' : '最新の版を読み込む'} isDisabled={loading || busy} onClick={() => void reload()} />
+    <DraftFlowPanel taskId={taskId} dirty={dirty} disabled={disabled} savedVersionId={snapshot?.versions.at(-1)?.id ?? null} onLatestVersion={id => { if (trackedJob || id === latestVersionId) return; setFlowVersion(current => current === id ? current : id); }} />
   </section></ThemeContext.Provider>;
 }

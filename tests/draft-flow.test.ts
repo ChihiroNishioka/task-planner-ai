@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Task } from '../src/domain/task';
@@ -162,4 +162,80 @@ it('DF-U31 完了中は作れず、完了から戻すと completed_at が消え�
   expect(flow.snapshot(task.id)).toMatchObject({ canCreate: true, blockReason: null });
   flow.enqueue(task.id, version.id, 'reopened');
   expect(await flow.runNextDraft(tasks, mock())).toMatchObject({ status: 'SUCCEEDED' });
+});
+
+it.each(['create', 'revise'])('DF-U32 %s はコミット前の停止で残った次版ファイルを置換し記録済み版を守る', async action => {
+  const { task, version } = await drafted();
+  const previous = preparations.listArtifacts(task.id)[0];
+  const before = readFileSync(previous.path, 'utf8');
+  const orphan = join(directory, 'artifacts', `${previous.id}-v2.md`);
+  writeFileSync(orphan, '停止前の未確定ファイル', { flag: 'wx' });
+  flow.close(); flow = new DraftFlowStore(path, join(directory, 'artifacts'));
+  if (action === 'create') {
+    flow.enqueue(task.id, version.id, 'after-crash');
+    expect(await flow.runNextDraft(tasks, mock())).toMatchObject({ status: 'SUCCEEDED' });
+  } else {
+    await expect(flow.reviseDraft(task.id, '結論を短くする', tasks, mock())).resolves.toMatchObject({ version: 2 });
+  }
+  const artifacts = preparations.listArtifacts(task.id);
+  expect(artifacts).toHaveLength(2);
+  expect(readFileSync(orphan, 'utf8')).toBe(artifacts[1].content);
+  expect(readFileSync(previous.path, 'utf8')).toBe(before);
+  expect(artifacts[0]).toEqual(previous);
+});
+
+it('DF-U33 15分超の準備RUNNINGは読み取りと受付を妨げず行を書き換えない', async () => {
+  const { task, version } = saved();
+  preparations.enqueue(task);
+  db.prepare("UPDATE preparation_jobs SET status='RUNNING',updated_at=? WHERE task_id=?").run(new Date(Date.now() - 16 * 60_000).toISOString(), task.id);
+  const before = db.prepare('SELECT * FROM preparation_jobs').all();
+  expect(flow.snapshot(task.id)).toMatchObject({ preparationActive: false, canCreate: true, blockReason: null });
+  expect(flow.enqueue(task.id, version.id, 'after-preparation-crash')).toMatchObject({ status: 'QUEUED' });
+  expect(await flow.runNextDraft(tasks, mock())).toMatchObject({ status: 'SUCCEEDED' });
+  expect(db.prepare('SELECT * FROM preparation_jobs').all()).toEqual(before);
+});
+
+it.each(['QUEUED', 'RUNNING'])('DF-U34 準備 %s は15分ちょうどまで作成を止める', status => {
+  const { task, version } = saved(); preparations.enqueue(task);
+  const now = new Date(); vi.useFakeTimers(); vi.setSystemTime(now);
+  try {
+    db.prepare('UPDATE preparation_jobs SET status=?,updated_at=? WHERE task_id=?').run(status, new Date(now.getTime() - 15 * 60_000).toISOString(), task.id);
+    expect(flow.snapshot(task.id)).toMatchObject({ preparationActive: true, canCreate: false, blockReason: 'PREPARING' });
+    expect(() => flow.enqueue(task.id, version.id, 'active')).toThrow(/分解を作成中/);
+    vi.advanceTimersByTime(1);
+    expect(flow.snapshot(task.id).preparationActive).toBe(status === 'QUEUED');
+  } finally { vi.useRealTimers(); }
+});
+
+it('DF-U35 snapshotの途中で別接続がコミットしても旧ドラフトと成功ジョブを混在させない', async () => {
+  const { task, version } = await drafted();
+  const job = flow.enqueue(task.id, version.id, 'concurrent-save');
+  db.prepare("UPDATE draft_jobs SET status='RUNNING' WHERE id=?").run(job.id);
+  const prepare = Database.prototype.prepare;
+  let committed = false;
+  const spy = vi.spyOn(Database.prototype, 'prepare').mockImplementation(function (this: Database.Database, sql: string) {
+    const statement: Database.Statement<unknown[]> = prepare.call(this, sql);
+    if (sql.startsWith('SELECT av.*')) {
+      const get = statement.get.bind(statement);
+      vi.spyOn(statement, 'get').mockImplementation((...args: unknown[]) => {
+        const result = get(...args);
+        if (!committed) {
+          committed = true;
+          db.transaction(() => {
+            db.prepare(`INSERT INTO artifact_versions(id,artifact_id,version_number,parent_version_id,content,file_name,change_summary,created_at,mode,fallback_reason,job_id,save_status,plan_json)
+              SELECT ?,artifact_id,2,id,content,artifact_id || '-v2.md',change_summary,created_at,mode,fallback_reason,?,save_status,plan_json FROM artifact_versions WHERE version_number=1`).run(randomUUID(), job.id);
+            db.prepare('UPDATE artifacts SET current_version=2 WHERE task_id=?').run(task.id);
+            db.prepare("UPDATE draft_jobs SET status='SUCCEEDED' WHERE id=?").run(job.id);
+          })();
+        }
+        return result;
+      });
+    }
+    return statement;
+  });
+  try {
+    expect(flow.snapshot(task.id)).toMatchObject({ draft: { version: 1 }, job: { status: 'RUNNING' } });
+    expect(committed).toBe(true);
+    expect(flow.snapshot(task.id)).toMatchObject({ draft: { version: 2 }, job: { status: 'SUCCEEDED' } });
+  } finally { spy.mockRestore(); }
 });

@@ -42,25 +42,27 @@ export class DraftFlowStore {
   }
 
   snapshot(taskId: string): DraftFlowSnapshot {
-    const state = this.taskState(taskId);
-    const versions = this.versions(taskId);
-    const latest = versions.at(-1);
-    const preparationActive = this.active('preparation_jobs', taskId);
-    const busy = this.active('breakdown_jobs', taskId);
-    const row = this.latestArtifact(taskId);
-    const tracking = row ? this.tracking(taskId, row.versionId, versions) : null;
-    const job = jobRowSchema.nullable().parse(this.db.prepare('SELECT * FROM draft_jobs WHERE task_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1').get(taskId) ?? null);
-    const blockReason: DraftFlowSnapshot['blockReason'] = state.deleted_at || closed(state.status) ? 'TASK_NOT_RUNNABLE'
-      : this.active('draft_jobs', taskId) ? 'DRAFT_JOB_ACTIVE'
-      : preparationActive ? 'PREPARING' : busy ? 'BREAKDOWN_BUSY'
-      : !latest ? 'NO_BREAKDOWN' : !latest.steps.length ? 'EMPTY_BREAKDOWN'
-      : !breakdownStepsSchema.safeParse(latest.steps).success ? 'INVALID_BREAKDOWN' : null;
-    return draftFlowSnapshotSchema.parse({ preparationActive,
-      breakdown: { latestVersionId: latest?.id ?? null, latestNumber: latest?.number ?? 0, stepCount: latest?.steps.length ?? 0, busy },
-      draft: row && tracking ? { versionId: row.versionId, version: row.version, createdAt: row.createdAt, mode: row.mode, modeLabel: modeLabel(row.mode, row.fallbackReason), basedOnVersionId: tracking.base?.id ?? null, basedOnNumber: tracking.base?.number ?? null, tracking: tracking.kind } : null,
-      stale: Boolean(tracking?.base && latest && JSON.stringify(tracking.base.steps) !== JSON.stringify(latest.steps)),
-      job: job ? toJob(job) : null, canCreate: blockReason === null, blockReason,
-    });
+    return this.db.transaction(() => {
+      const state = this.taskState(taskId);
+      const versions = this.versions(taskId);
+      const latest = versions.at(-1);
+      const preparationActive = this.active('preparation_jobs', taskId);
+      const busy = this.active('breakdown_jobs', taskId);
+      const row = this.latestArtifact(taskId);
+      const tracking = row ? this.tracking(taskId, row.versionId, versions) : null;
+      const job = jobRowSchema.nullable().parse(this.db.prepare('SELECT * FROM draft_jobs WHERE task_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1').get(taskId) ?? null);
+      const blockReason: DraftFlowSnapshot['blockReason'] = state.deleted_at || closed(state.status) ? 'TASK_NOT_RUNNABLE'
+        : this.active('draft_jobs', taskId) ? 'DRAFT_JOB_ACTIVE'
+        : preparationActive ? 'PREPARING' : busy ? 'BREAKDOWN_BUSY'
+        : !latest ? 'NO_BREAKDOWN' : !latest.steps.length ? 'EMPTY_BREAKDOWN'
+        : !breakdownStepsSchema.safeParse(latest.steps).success ? 'INVALID_BREAKDOWN' : null;
+      return draftFlowSnapshotSchema.parse({ preparationActive, hasRelatedMaterials: this.hasRelatedMaterials(taskId),
+        breakdown: { latestVersionId: latest?.id ?? null, latestNumber: latest?.number ?? 0, stepCount: latest?.steps.length ?? 0, busy },
+        draft: row && tracking ? { versionId: row.versionId, version: row.version, createdAt: row.createdAt, mode: row.mode, modeLabel: modeLabel(row.mode, row.fallbackReason), basedOnVersionId: tracking.base?.id ?? null, basedOnNumber: tracking.base?.number ?? null, tracking: tracking.kind } : null,
+        stale: Boolean(tracking?.base && latest && JSON.stringify(tracking.base.steps) !== JSON.stringify(latest.steps)),
+        job: job ? toJob(job) : null, canCreate: blockReason === null, blockReason,
+      });
+    })();
   }
 
   enqueue(taskId: string, breakdownVersionId: string, requestKey: string): DraftJob {
@@ -191,6 +193,9 @@ export class DraftFlowStore {
 
   private saveArtifact(taskId: string, generation: Generation, base: string | null, source: 'CREATE' | 'REVISE', jobId: string | null, revision: { previous: StoredArtifact; feedback: string } | null, onWritten: (path: string) => void) {
     const previous = this.latestArtifact(taskId); const id = previous?.id ?? randomUUID(); const version = (previous?.version ?? 0) + 1; const versionId = randomUUID(); const now = new Date().toISOString(); const fileName = `${id}-v${version}.md`; const path = join(this.artifactDirectory, fileName);
+    if (this.db.prepare('SELECT id FROM artifact_versions WHERE file_name=? LIMIT 1').get(fileName)) throw new Error('記録済みのドラフトファイルは置換できません。');
+    // immediate トランザクション内で、停止時に残った未記録ファイルだけを置換する。
+    rmSync(path, { force: true });
     writeFileSync(path, generation.markdown, { flag: 'wx' }); onWritten(path);
     if (previous) this.db.prepare('UPDATE artifacts SET current_version=? WHERE id=?').run(version, id);
     else this.db.prepare('INSERT INTO artifacts(id,task_id,current_version,created_at) VALUES (?,?,?,?)').run(id, taskId, version, now);
@@ -212,7 +217,15 @@ export class DraftFlowStore {
   }
   private versions(taskId: string) { return z.array(z.object({ data_json: z.string() })).parse(this.db.prepare('SELECT data_json FROM breakdown_versions WHERE task_id=? ORDER BY number').all(taskId)).map(row => breakdownVersionSchema.parse(JSON.parse(row.data_json))); }
   private taskState(taskId: string) { const row = stateSchema.nullable().parse(this.db.prepare('SELECT status,revision,deleted_at FROM tasks WHERE id=?').get(taskId) ?? null); if (!row) throw new DraftFlowError('NOT_FOUND'); return row; }
-  private active(table: 'preparation_jobs' | 'breakdown_jobs' | 'draft_jobs', taskId: string) { return Boolean(this.db.prepare(`SELECT id FROM ${table} WHERE task_id=? AND status IN ('QUEUED','RUNNING') LIMIT 1`).get(taskId)); }
+  private active(table: 'preparation_jobs' | 'breakdown_jobs' | 'draft_jobs', taskId: string) {
+    if (table === 'preparation_jobs') return Boolean(this.db.prepare("SELECT id FROM preparation_jobs WHERE task_id=? AND (status='QUEUED' OR (status='RUNNING' AND updated_at >= ?)) LIMIT 1").get(taskId, new Date(Date.now() - 15 * 60_000).toISOString()));
+    return Boolean(this.db.prepare(`SELECT id FROM ${table} WHERE task_id=? AND status IN ('QUEUED','RUNNING') LIMIT 1`).get(taskId));
+  }
+  private hasRelatedMaterials(taskId: string) {
+    return (['task_references', 'task_inputs'] as const).some(table =>
+      Boolean(this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table)) &&
+      Boolean(this.db.prepare(`SELECT id FROM ${table} WHERE task_id=? LIMIT 1`).get(taskId)));
+  }
   private getJob(id: string): DraftJob { return toJob(jobRowSchema.parse(this.db.prepare('SELECT * FROM draft_jobs WHERE id=?').get(id))); }
   private finishDraft(id: string, status: DraftJob['status'], code: string | null) { this.db.prepare("UPDATE draft_jobs SET status=?,error_code=?,updated_at=? WHERE id=? AND status='RUNNING'").run(status, code, new Date().toISOString(), id); }
   close() { this.db.close(); }

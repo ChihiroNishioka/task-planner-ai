@@ -35,6 +35,7 @@ export const draftJobSchema = z.object({
 });
 export const draftFlowSnapshotSchema = z.object({
   preparationActive: z.boolean(),
+  hasRelatedMaterials: z.boolean(),
   breakdown: z.object({ latestVersionId: z.string().nullable(), latestNumber: z.number(), stepCount: z.number(), busy: z.boolean() }),
   draft: z.object({ versionId: z.string(), version: z.number(), createdAt: z.string(), mode: artifactModeSchema, modeLabel: z.string(), basedOnVersionId: z.string().nullable(), basedOnNumber: z.number().nullable(), tracking: z.enum(['TRACKED', 'INFERRED', 'UNKNOWN']) }).nullable(),
   stale: z.boolean(), job: draftJobSchema.nullable(), canCreate: z.boolean(),

@@ -75,8 +75,11 @@ for (const viewport of viewports) {
       await editor(page).getByLabel('項目 1', { exact: true }).fill('編集済みの最初の手順を確認する');
       await expect(createButton(page)).toBeDisabled();
       await expect(panel(page)).toContainText('未保存の変更があります。');
+      await expect(createButton(page)).toHaveAccessibleDescription('未保存の変更があります。保存するとこの分解でドラフトを作れます。');
       await editor(page).getByRole('button', { name: 'ユーザー編集版を保存' }).click();
       await expect(createButton(page)).toBeEnabled();
+      await expect(createButton(page)).toHaveAccessibleDescription(/分解 v\d+（\d+件）をもとに作ります。$/);
+      await expect(panel(page)).not.toContainText('関連資料');
       await capture(page, 'draft-button', viewport);
       await createButton(page).click();
       await expect(panel(page).locator('[data-draft-status]')).toBeFocused();
@@ -97,10 +100,13 @@ for (const viewport of viewports) {
       await changeBreakdown(request, id, ['新しい手順を確認する', '新しい下書きをまとめる']);
       await page.goto(`/tasks/${id}`);
       await expect(panel(page)).toContainText('分解が変わっています。ドラフトを作り直しますか？');
+      await expect(panel(page)).toContainText('今のドラフトは履歴に残ります。コメントで直した内容は引き継がれません。');
       await capture(page, 'draft-stale-notice', viewport);
       await page.goto(`/tasks/${id}/review`);
       const notice = page.getByRole('region', { name: 'ドラフトの分解変更案内', exact: true });
       await expect(notice).toContainText('分解が変わっています。ドラフトを作り直しますか？');
+      await expect(notice).toContainText('今のドラフトは履歴に残ります。コメントで直した内容は引き継がれません。');
+      await capture(page, 'draft-review-stale', viewport);
       await Promise.all([
         page.waitForResponse(response => response.url().endsWith(draftUrl(id)) && response.request().method() === 'POST'),
         notice.getByRole('button', { name: 'この分解でドラフトを作り直す' }).click(),
@@ -108,10 +114,13 @@ for (const viewport of viewports) {
       worker();
       await expect(page.getByRole('heading', { name: 'v2', exact: true })).toBeVisible();
       await expect(page.getByText('分解が変わっています。ドラフトを作り直しますか？', { exact: true })).toHaveCount(0);
+      await expect(notice).toHaveCount(0);
       const before = await breakdown(request, id);
       await page.getByLabel('修正指示').fill('結論を先に書いてください');
       await page.getByRole('button', { name: '修正版を作る', exact: true }).click();
       await expect(page.getByRole('heading', { name: 'v3', exact: true })).toBeVisible();
+      await expect(notice).toHaveCount(0);
+      await expect(page.getByText('ドラフト v2 を作成しました。', { exact: true })).toHaveCount(0);
       expect((await breakdown(request, id)).versions).toEqual(before.versions);
       await capture(page, 'draft-after-comment', viewport);
     });
@@ -163,6 +172,11 @@ for (const viewport of viewports) {
         : route.continue());
       await expect(panel(page).locator('[data-draft-error]')).toContainText('ドラフトを作成できませんでした。');
       await expect(createButton(page)).toBeFocused();
+      await expect(panel(page).getByRole('alert')).toHaveText('ドラフトを作成できませんでした。もう一度お試しください。');
+      await page.reload();
+      await expect(panel(page)).toContainText('ドラフトを作成できませんでした。もう一度お試しください。');
+      await expect(panel(page).getByRole('alert')).toHaveCount(0);
+      await expect(panel(page).locator('[data-draft-error]')).toHaveCount(0);
       await page.unroute(`**${draftUrl(id)}`);
       expect((await request.post(draftUrl(id), { data: { action: 'cancel', jobId: queued.job!.id } })).status()).toBe(200);
       await expect(createButton(page)).toBeEnabled();
@@ -257,6 +271,19 @@ for (const viewport of viewports) {
       await expect(editor(page).getByLabel('項目 1', { exact: true })).toHaveValue('作成中も保持する入力');
       await expect(editor(page).getByLabel('全体コメント', { exact: true })).toHaveValue('作成後も残すコメント');
       await expect(page.getByRole('region', { name: 'AIの準備結果' })).toHaveCount(0);
+    });
+    test('DF-E13 関連資料のあるときだけ入力範囲を案内する', async ({ page, request, baseURL }) => {
+      const id = await seed(request);
+      // 関連資料 API は CSRF 対策で、同じ送信元（origin）と JSON の content-type を求める（DELETE も）。
+      const headers = { origin: new URL(baseURL!).origin, 'content-type': 'application/json' };
+      const response = await request.post(`/api/tasks/${id}/references`, { headers, data: { kind: 'NOTE', body: '合成の関連メモ' } });
+      expect(response.status()).toBe(201);
+      await page.goto(`/tasks/${id}`);
+      await expect(createButton(page)).toHaveAccessibleDescription(/関連資料（メモ・URLの本文、添付はファイル名と種類のみ）も使います。$/);
+      const { reference } = await response.json();
+      expect((await request.delete(`/api/tasks/${id}/references/${reference.id}`, { headers })).status()).toBe(204);
+      await expect(createButton(page)).toHaveAccessibleDescription(/分解 v\d+（\d+件）をもとに作ります。$/);
+      await expect(panel(page)).not.toContainText('関連資料');
     });
   });
 }

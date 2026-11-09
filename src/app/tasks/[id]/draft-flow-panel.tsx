@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { z } from 'zod';
 import { Button } from '@astryxdesign/core/Button';
 import { ThemeContext } from '@astryxdesign/core/theme';
@@ -21,6 +21,7 @@ const reasons: Record<string, string> = {
 type Props = { taskId: string; dirty?: boolean; disabled?: boolean; savedVersionId?: string | null; onLatestVersion?: (id: string | null) => void; onCreated?: () => Promise<void>; staleOnly?: boolean };
 
 export function DraftFlowPanel({ taskId, dirty = false, disabled = false, savedVersionId, onLatestVersion, onCreated, staleOnly = false }: Props) {
+  const reasonId = useId();
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [readError, setReadError] = useState('');
   const [actionError, setActionError] = useState('');
@@ -73,8 +74,7 @@ export function DraftFlowPanel({ taskId, dirty = false, disabled = false, savedV
     if (next.job.status === 'SUCCEEDED' && next.draft) {
       const message = `ドラフト v${next.draft.version} を作成しました。`;
       if (createdCallback.current) {
-        setCompletion(message);
-        focus.current = 'status';
+        if (!staleOnly) { setCompletion(message); focus.current = 'status'; }
         void createdCallback.current().catch(() => {
           if (!leaving.current) setActionError('ドラフトは作成されましたが、表示を更新できませんでした。状態を再取得してください。');
         });
@@ -84,8 +84,11 @@ export function DraftFlowPanel({ taskId, dirty = false, disabled = false, savedV
       } else {
         reloadWithDraft(next.draft.versionId);
       }
-    } else if (next.job.status === 'FAILED' || next.job.status === 'CANCELLED') focus.current = 'create';
-  }, [taskId, reloadWithDraft]);
+    } else if (next.job.status === 'FAILED' || next.job.status === 'CANCELLED') {
+      if (next.job.status === 'FAILED') setActionError(next.job.message ?? 'ドラフトを作成できませんでした。もう一度お試しください。');
+      focus.current = 'create';
+    }
+  }, [taskId, reloadWithDraft, staleOnly]);
   const read = useCallback(async () => {
     if (leaving.current) return;
     try {
@@ -172,17 +175,17 @@ export function DraftFlowPanel({ taskId, dirty = false, disabled = false, savedV
     finally { if (!leaving.current) setSending(false); }
   }
   const stale = Boolean(snapshot?.stale && !activeJob);
-  const reason = !snapshot || waitingForSaved ? 'ドラフトの状態を確認中…' : disabled ? reasons.TASK_NOT_RUNNABLE : dirty ? '未保存の変更があります。保存するとこの分解でドラフトを作れます。' : activeJob ? 'AIがドラフトを作成中です。1〜2分かかることがあります。作成中に分解を保存すると、作成中のドラフトは使われません。' : reasons[snapshot.blockReason ?? ''] ?? `分解 v${snapshot.breakdown.latestNumber}（${snapshot.breakdown.stepCount}件）と参考資料をもとに作ります。`;
-  if (staleOnly && !stale && !activeJob && !readError && !actionError && !completion) return null;
+  const reason = !snapshot || waitingForSaved ? 'ドラフトの状態を確認中…' : disabled ? reasons.TASK_NOT_RUNNABLE : dirty ? '未保存の変更があります。保存するとこの分解でドラフトを作れます。' : activeJob ? 'AIがドラフトを作成中です。1〜2分かかることがあります。作成中に分解を保存すると、作成中のドラフトは使われません。' : reasons[snapshot.blockReason ?? ''] ?? `分解 v${snapshot.breakdown.latestNumber}（${snapshot.breakdown.stepCount}件）をもとに作ります。${snapshot.hasRelatedMaterials ? '関連資料（メモ・URLの本文、添付はファイル名と種類のみ）も使います。' : ''}`;
+  if (staleOnly && !stale && !activeJob && !readError && !actionError) return null;
   return <section className={styles.panel} aria-label={staleOnly ? 'ドラフトの分解変更案内' : 'ドラフト作成'}>
     <h2>ドラフト</h2>
-    {stale && snapshot?.draft ? <div className={styles.notice}><p><strong>分解が変わっています。ドラフトを作り直しますか？</strong></p><p>ドラフト v{snapshot.draft.version} は分解 v{snapshot.draft.basedOnNumber} をもとにしています。今の分解は v{snapshot.breakdown.latestNumber} です。</p></div> : null}
+    {stale && snapshot?.draft ? <div className={styles.notice}><p><strong>分解が変わっています。ドラフトを作り直しますか？</strong></p><p>ドラフト v{snapshot.draft.version} は分解 v{snapshot.draft.basedOnNumber} をもとにしています。今の分解は v{snapshot.breakdown.latestNumber} です。</p><p>今のドラフトは履歴に残ります。コメントで直した内容は引き継がれません。</p></div> : null}
     {!activeJob && snapshot?.draft?.tracking === 'UNKNOWN' ? <p>このドラフトには元にした分解の記録がありません。</p> : null}
-    <Button ref={createRef} label={activeJob || sending ? 'ドラフトを作成中…' : stale ? 'この分解でドラフトを作り直す' : 'この分解でドラフトを作る'} variant="primary" isDisabled={blocked} onClick={() => void submit('create')} />
-    <p>{reason}</p>
+    <Button ref={createRef} label={activeJob || sending ? 'ドラフトを作成中…' : stale ? 'この分解でドラフトを作り直す' : 'この分解でドラフトを作る'} variant="primary" isDisabled={blocked} aria-describedby={reasonId} onClick={() => void submit('create')} />
+    <p id={reasonId}>{reason}</p>
     {activeJob ? <><p>AIワーカー {workerLabel ?? (serviceError ? '状態を確認できません' : '確認中…')}</p><Button label="ドラフト作成を取り消す" isDisabled={sending} onClick={() => void submit('cancel')} /></> : null}
     {readError ? <><p role="alert" data-draft-error="true">{readError}</p><Button label="ドラフトの状態を再取得" isDisabled={sending} onClick={() => void read()} /></> : null}
-    {actionError || snapshot?.job?.status === 'FAILED' ? <p role="alert" data-draft-error="true">{actionError || snapshot?.job?.message}</p> : null}
+    {actionError ? <p role="alert" data-draft-error="true">{actionError}</p> : snapshot?.job?.status === 'FAILED' ? <p>{snapshot.job.message}</p> : null}
     <p ref={statusRef} tabIndex={-1} role="status" data-draft-status="true">{completion || (activeJob ? 'ドラフト作成を受け付けました。ワーカーの処理を待っています。' : '')}</p>
     {pendingDisplay ? <Button label="ドラフトを表示（ページを再読み込み）" onClick={() => { if (snapshot?.draft && window.confirm('未保存の分解があります。入力を破棄してドラフトを表示しますか？')) reloadWithDraft(snapshot.draft.versionId); }} /> : null}
   </section>;
