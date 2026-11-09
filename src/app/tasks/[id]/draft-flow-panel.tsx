@@ -18,9 +18,10 @@ const reasons: Record<string, string> = {
   TASK_NOT_RUNNABLE: '完了・中止したタスクではドラフトを作れません。',
 };
 
-type Props = { taskId: string; dirty?: boolean; disabled?: boolean; savedVersionId?: string | null; onLatestVersion?: (id: string | null) => void; onCreated?: () => Promise<void>; staleOnly?: boolean };
+type Draft = NonNullable<Snapshot['draft']>;
+type Props = { taskId: string; displayedDraftVersionId: string | null; dirty?: boolean; disabled?: boolean; savedVersionId?: string | null; onLatestVersion?: (id: string | null) => void; onCreated?: (draft: Draft, canTransferFocus: () => boolean) => Promise<void>; staleOnly?: boolean };
 
-export function DraftFlowPanel({ taskId, dirty = false, disabled = false, savedVersionId, onLatestVersion, onCreated, staleOnly = false }: Props) {
+export function DraftFlowPanel({ taskId, displayedDraftVersionId, dirty = false, disabled = false, savedVersionId, onLatestVersion, onCreated, staleOnly = false }: Props) {
   const reasonId = useId();
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [readError, setReadError] = useState('');
@@ -28,6 +29,7 @@ export function DraftFlowPanel({ taskId, dirty = false, disabled = false, savedV
   const [sending, setSending] = useState(false);
   const [completion, setCompletion] = useState('');
   const [pendingDisplay, setPendingDisplay] = useState(false);
+  const panelRef = useRef<HTMLElement>(null);
   const createRef = useRef<HTMLButtonElement>(null);
   const statusRef = useRef<HTMLParagraphElement>(null);
   const retry = useRef<{ versionId: string; key: string } | null>(null);
@@ -41,11 +43,14 @@ export function DraftFlowPanel({ taskId, dirty = false, disabled = false, savedV
   const latestCallback = useRef(onLatestVersion);
   const createdCallback = useRef(onCreated);
   const dirtyRef = useRef(dirty);
+  const displayedVersion = useRef(displayedDraftVersionId);
+  const refreshingVersion = useRef<string | null>(null);
   useEffect(() => {
     latestCallback.current = onLatestVersion;
     createdCallback.current = onCreated;
     dirtyRef.current = dirty;
-  }, [onLatestVersion, onCreated, dirty]);
+    displayedVersion.current = displayedDraftVersionId;
+  }, [onLatestVersion, onCreated, dirty, displayedDraftVersionId]);
   const { services, error: serviceError } = useServices();
   const workerLabel = services?.find(service => service.name === 'AI')?.label;
   const reloadWithDraft = useCallback((versionId: string) => {
@@ -69,13 +74,20 @@ export function DraftFlowPanel({ taskId, dirty = false, disabled = false, savedV
     pollingDelay.current = next.preparationActive || next.breakdown.busy || Boolean(next.job && ['QUEUED', 'RUNNING'].includes(next.job.status)) ? 2000 : 5000;
     latestCallback.current?.(next.breakdown.latestVersionId);
     if (next.job && ['QUEUED', 'RUNNING'].includes(next.job.status)) tracked.current = next.job.id;
-    if (next.job?.id !== tracked.current || ['QUEUED', 'RUNNING'].includes(next.job.status)) return;
-    tracked.current = null;
-    if (next.job.status === 'SUCCEEDED' && next.draft) {
+    const finishedTracked = next.job?.id === tracked.current && next.job && !['QUEUED', 'RUNNING'].includes(next.job.status);
+    if (finishedTracked) tracked.current = null;
+    const draftChanged = next.draft && next.draft.versionId !== displayedVersion.current;
+    if (next.draft && (draftChanged || (finishedTracked && next.job?.status === 'SUCCEEDED')) && refreshingVersion.current !== next.draft.versionId) {
+      const versionId = next.draft.versionId;
+      refreshingVersion.current = versionId;
       const message = `ドラフト v${next.draft.version} を作成しました。`;
       if (createdCallback.current) {
+        const previous = document.activeElement;
+        const ownedFocus = previous !== null && Boolean(panelRef.current?.contains(previous));
+        const canTransferFocus = () => ownedFocus && (document.activeElement === previous || document.activeElement === document.body || document.activeElement === document.documentElement);
         if (!staleOnly) { setCompletion(message); focus.current = 'status'; }
-        void createdCallback.current().catch(() => {
+        void createdCallback.current(next.draft, canTransferFocus).catch(() => {
+          if (refreshingVersion.current === versionId) refreshingVersion.current = null;
           if (!leaving.current) setActionError('ドラフトは作成されましたが、表示を更新できませんでした。状態を再取得してください。');
         });
       } else if (dirtyRef.current) {
@@ -84,7 +96,8 @@ export function DraftFlowPanel({ taskId, dirty = false, disabled = false, savedV
       } else {
         reloadWithDraft(next.draft.versionId);
       }
-    } else if (next.job.status === 'FAILED' || next.job.status === 'CANCELLED') {
+    }
+    if (finishedTracked && next.job && (next.job.status === 'FAILED' || next.job.status === 'CANCELLED')) {
       if (next.job.status === 'FAILED') setActionError(next.job.message ?? 'ドラフトを作成できませんでした。もう一度お試しください。');
       focus.current = 'create';
     }
@@ -177,7 +190,7 @@ export function DraftFlowPanel({ taskId, dirty = false, disabled = false, savedV
   const stale = Boolean(snapshot?.stale && !activeJob);
   const reason = !snapshot || waitingForSaved ? 'ドラフトの状態を確認中…' : disabled ? reasons.TASK_NOT_RUNNABLE : dirty ? '未保存の変更があります。保存するとこの分解でドラフトを作れます。' : activeJob ? 'AIがドラフトを作成中です。1〜2分かかることがあります。作成中に分解を保存すると、作成中のドラフトは使われません。' : reasons[snapshot.blockReason ?? ''] ?? `分解 v${snapshot.breakdown.latestNumber}（${snapshot.breakdown.stepCount}件）をもとに作ります。${snapshot.hasRelatedMaterials ? '関連資料（メモ・URLの本文、添付はファイル名と種類のみ）も使います。' : ''}`;
   if (staleOnly && !stale && !activeJob && !readError && !actionError) return null;
-  return <section className={styles.panel} aria-label={staleOnly ? 'ドラフトの分解変更案内' : 'ドラフト作成'}>
+  return <section ref={panelRef} className={styles.panel} aria-label={staleOnly ? 'ドラフトの分解変更案内' : 'ドラフト作成'}>
     <h2>ドラフト</h2>
     {stale && snapshot?.draft ? <div className={styles.notice}><p><strong>分解が変わっています。ドラフトを作り直しますか？</strong></p><p>ドラフト v{snapshot.draft.version} は分解 v{snapshot.draft.basedOnNumber} をもとにしています。今の分解は v{snapshot.breakdown.latestNumber} です。</p><p>今のドラフトは履歴に残ります。コメントで直した内容は引き継がれません。</p></div> : null}
     {!activeJob && snapshot?.draft?.tracking === 'UNKNOWN' ? <p>このドラフトには元にした分解の記録がありません。</p> : null}
@@ -191,6 +204,20 @@ export function DraftFlowPanel({ taskId, dirty = false, disabled = false, savedV
   </section>;
 }
 
-export function DraftStaleNotice({ taskId, onCreated }: { taskId: string; onCreated: () => Promise<void> }) {
-  return <ThemeContext.Provider value={{ theme: neutralTheme, mode: 'light' }}><div data-astryx-theme="neutral" data-theme="light"><DraftFlowPanel taskId={taskId} onCreated={onCreated} staleOnly /></div></ThemeContext.Provider>;
+export function DraftStaleNotice({ taskId, displayedDraftVersionId, onCreated }: { taskId: string; displayedDraftVersionId: string | null; onCreated: () => Promise<void> }) {
+  const statusRef = useRef<HTMLParagraphElement>(null);
+  const focusPending = useRef<(() => boolean) | null>(null);
+  const [created, setCreated] = useState<Draft | null>(null);
+  const createdVersionId = created?.versionId;
+  useEffect(() => {
+    const canTransferFocus = focusPending.current;
+    focusPending.current = null;
+    if (createdVersionId === displayedDraftVersionId && canTransferFocus?.()) statusRef.current?.focus();
+  }, [taskId, createdVersionId, displayedDraftVersionId]);
+  const refresh = async (draft: Draft, canTransferFocus: () => boolean) => {
+    await onCreated();
+    focusPending.current = canTransferFocus;
+    setCreated(draft);
+  };
+  return <ThemeContext.Provider value={{ theme: neutralTheme, mode: 'light' }}><div data-astryx-theme="neutral" data-theme="light"><DraftFlowPanel taskId={taskId} displayedDraftVersionId={displayedDraftVersionId} onCreated={refresh} staleOnly /><p className={styles.completion} ref={statusRef} role="status" tabIndex={-1} data-review-draft-status="true">{created && created.versionId === displayedDraftVersionId ? `ドラフト v${created.version} を作成しました。` : ''}</p></div></ThemeContext.Provider>;
 }

@@ -124,6 +124,68 @@ for (const viewport of viewports) {
       expect((await breakdown(request, id)).versions).toEqual(before.versions);
       await capture(page, 'draft-after-comment', viewport);
     });
+    for (const moveFocus of [false, true]) {
+      test(`DF-E14 レビュー作り直しの完了を通知し${moveFocus ? '利用者が移したフォーカスを保持する' : '消えるパネルからフォーカスを引き渡す'}`, async ({ page, request }) => {
+        const id = await seed(request);
+        await createDraft(request, id);
+        await changeBreakdown(request, id, ['作り直した手順']);
+        await page.goto(`/tasks/${id}/review`);
+        const notice = page.getByRole('region', { name: 'ドラフトの分解変更案内', exact: true });
+        await notice.getByRole('button', { name: 'この分解でドラフトを作り直す' }).click();
+        await expect(notice.locator('[data-draft-status]')).toBeFocused();
+        const link = page.getByRole('link', { name: '← タスク詳細', exact: true });
+        if (moveFocus) await link.focus();
+        worker();
+        const status = page.locator('[data-review-draft-status]');
+        await expect(status).toHaveRole('status');
+        await expect(status).toHaveText('ドラフト v2 を作成しました。');
+        await expect(page.getByRole('heading', { name: 'v2', exact: true })).toBeVisible();
+        await expect(notice).toHaveCount(0);
+        await expect(moveFocus ? link : status).toBeFocused();
+        await page.waitForResponse(response => response.url().endsWith(draftUrl(id)) && response.request().method() === 'GET');
+        await expect(moveFocus ? link : status).toBeFocused();
+      });
+    }
+    for (const review of [false, true]) {
+      test(`DF-E15 ${review ? 'レビュー' : '詳細'}の初回snapshotが成功済みでも表示版を照合する`, async ({ page, request }) => {
+        const id = await seed(request);
+        await createDraft(request, id);
+        const old: unknown = await (await request.get(`/api/tasks/${id}/artifacts`)).json();
+        await changeBreakdown(request, id, ['初回取得の間に完成した新しい手順']);
+        await createDraft(request, id);
+        // 最初の draft snapshot が届くまでの成果物取得は、すべて古い版（v1）を返す。
+        // 1回目だけを古くすると、開発時の二重の初回取得で v2 が入り、照合がなくても通ってしまう（RED 確認で判明）。
+        let snapshotSeen = false;
+        page.on('response', response => { if (response.url().endsWith(draftUrl(id)) && response.request().method() === 'GET') snapshotSeen = true; });
+        await page.route(`**/api/tasks/${id}/artifacts`, route => snapshotSeen ? route.continue() : route.fulfill({ json: old }));
+        await page.goto(`/tasks/${id}${review ? '/review' : ''}`);
+        await expect(page.getByRole('heading', { name: review ? 'v2' : 'ドラフト v2', exact: true })).toBeVisible();
+        await expect(page.locator(review ? '.version-card' : '.ai-draft').filter({ hasText: '初回取得の間に完成した新しい手順' })).toBeVisible();
+      });
+    }
+    test('DF-E16 初回snapshotの版不一致でも未保存入力を保持して表示を案内する', async ({ page, request }) => {
+      const id = await seed(request);
+      await createDraft(request, id);
+      const old: unknown = await (await request.get(`/api/tasks/${id}/artifacts`)).json();
+      await changeBreakdown(request, id, ['初回取得の間に作成した手順']);
+      await createDraft(request, id);
+      // DF-E15 と同じく、最初の draft snapshot が届くまでの成果物取得はすべて古い版にする（開発時の二重の初回取得対策）。
+      let snapshotSeen = false;
+      page.on('response', response => { if (response.url().endsWith(draftUrl(id)) && response.request().method() === 'GET') snapshotSeen = true; });
+      await page.route(`**/api/tasks/${id}/artifacts`, route => snapshotSeen ? route.continue() : route.fulfill({ json: old }));
+      let release = () => {};
+      const held = new Promise<void>(resolve => { release = resolve; });
+      await page.route(`**${draftUrl(id)}`, async route => { await held; await route.continue(); });
+      try {
+        await page.goto(`/tasks/${id}`);
+        await editor(page).getByLabel('項目 1', { exact: true }).fill('初回取得中の未保存入力');
+        release();
+        await expect(panel(page).getByRole('button', { name: 'ドラフトを表示（ページを再読み込み）' })).toBeVisible();
+        await expect(panel(page)).toContainText('編集中の分解は保持しています。');
+        await expect(editor(page).getByLabel('項目 1', { exact: true })).toHaveValue('初回取得中の未保存入力');
+        await expect(page.getByRole('heading', { name: 'ドラフト v1', exact: true })).toBeVisible();
+      } finally { release(); }
+    });
     test('DF-E07 分解なし、0件、完了で理由を示して無効にする', async ({ page, request }) => {
       const id = await seed(request, false);
       await page.goto(`/tasks/${id}`);

@@ -93,7 +93,7 @@ export default function Review({ params }: { params: Promise<{ id: string }> }) 
 
   const current = data.artifacts.at(-1);
   return <main className="shell"><header className="topbar"><Link href={taskId ? `/tasks/${taskId}` : '/'} className="back-link">← タスク詳細</Link><span className="mock-label">モック</span></header><section className="detail-card"><p className="eyebrow">ドラフト比較</p><h1>成果物レビュー</h1>
-    {taskId ? <DraftStaleNotice taskId={taskId} onCreated={() => load(taskId)} /> : null}
+    {taskId ? <DraftStaleNotice key={taskId} taskId={taskId} displayedDraftVersionId={current?.versionId ?? null} onCreated={() => load(taskId)} /> : null}
     {loading ? <p className="state" role="status">読み込み中…</p> : error && data.artifacts.length === 0 ? <div className="state error" role="alert">{error}</div> : !current ? <div className="state empty"><h2>ドラフトはありません</h2><p>タスク詳細で分解を確認し、「この分解でドラフトを作る」を押してください。</p></div> : <>
       <p>保存状態 {saveStatusLabel('MOCK_SAVED')}（Drive連携はモック）</p>
       <div className="version-grid">{data.artifacts.map((artifact) => <VersionCard key={artifact.versionId} artifact={artifact} busy={busy} onAction={reviewVersion} />)}</div>

@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { PreparationAdapter } from './mock-ai';
@@ -161,7 +161,7 @@ export class DraftFlowStore {
           this.saveArtifact(task.id, { ...generation, plan: { ...generation.plan, steps } }, queued.breakdown_version_id, 'CREATE', queued.id, null, file => { written = file; });
           this.finishDraft(queued.id, 'SUCCEEDED', null);
         }).immediate();
-      } catch (error) { if (written) rmSync(written, { force: true }); throw error; }
+      } catch (error) { if (written) this.removeUnrecordedFile(written); throw error; }
     } catch { this.db.prepare("UPDATE draft_jobs SET status='FAILED',error_code='GENERATION_FAILED',updated_at=? WHERE id=? AND status='RUNNING'").run(new Date().toISOString(), queued.id); }
     return this.getJob(queued.id);
   }
@@ -187,7 +187,7 @@ export class DraftFlowStore {
         if (this.latestArtifact(taskId)?.versionId !== previous.versionId) throw new Error('改訂中に別の版が作成されたため、修正版を保存しませんでした。最新の版を確認してください。');
         this.saveArtifact(taskId, { ...generation, plan: { ...generation.plan, steps: latestSteps.length ? latestSteps : previous.plan.steps } }, tracking.base?.id ?? null, 'REVISE', null, { previous, feedback }, file => { written = file; });
       }).immediate();
-    } catch (error) { if (written) rmSync(written, { force: true }); throw error; }
+    } catch (error) { if (written) this.removeUnrecordedFile(written); throw error; }
     return this.latestArtifact(taskId) ?? (() => { throw new Error('改訂版を再取得できません。'); })();
   }
 
@@ -202,6 +202,12 @@ export class DraftFlowStore {
     this.db.prepare("INSERT INTO artifact_versions(id,artifact_id,version_number,parent_version_id,content,file_name,change_summary,created_at,mode,fallback_reason,job_id,save_status,plan_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,'MOCK_SAVED',?)").run(versionId, id, version, revision?.previous.versionId ?? null, generation.markdown, fileName, generation.changeSummary, now, generation.meta?.mode ?? 'mock', generation.meta?.fallbackReason ?? null, jobId, JSON.stringify(generation.plan));
     this.db.prepare('INSERT INTO draft_version_links(artifact_version_id,task_id,breakdown_version_id,source,created_at) VALUES (?,?,?,?,?)').run(versionId, taskId, base, source, now);
     if (revision) this.db.prepare('INSERT INTO feedback(id,artifact_version_id,content,applied_to_version_id,created_at) VALUES (?,?,?,?,?)').run(randomUUID(), revision.previous.versionId, revision.feedback, versionId, now);
+  }
+  private removeUnrecordedFile(path: string) {
+    this.db.transaction(() => {
+      // ロールバック後に同じ次版を確定した別の保存処理を保護する。
+      if (!this.db.prepare('SELECT id FROM artifact_versions WHERE file_name=? LIMIT 1').get(basename(path))) rmSync(path, { force: true });
+    }).immediate();
   }
   private latestArtifact(taskId: string): StoredArtifact | null {
     const row = z.object({ id: z.string(), artifact_id: z.string(), version_number: z.number(), parent_version_id: z.string().nullable(), file_name: z.string(), mode: z.enum(['mock', 'ai', 'mock_fallback']), fallback_reason: z.string().nullable(), job_id: z.string().nullable(), content: z.string(), change_summary: z.string(), created_at: z.string(), plan_json: z.string() }).nullable().parse(this.db.prepare('SELECT av.* FROM artifact_versions av JOIN artifacts a ON a.id=av.artifact_id WHERE a.task_id=? ORDER BY av.version_number DESC LIMIT 1').get(taskId) ?? null);

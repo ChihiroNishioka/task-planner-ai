@@ -278,6 +278,6 @@ export function BreakdownEditor({ taskId, artifactVersion, disabled, onLatestVer
     <p role="status">{notice}</p>
     {error || watchError ? <p className={styles.warning} role="alert" data-app-error="true">{error}{watchError}</p> : null}
     <Button label={loading ? '読み込み中…' : '最新の版を読み込む'} isDisabled={loading || busy} onClick={() => void reload()} />
-    <DraftFlowPanel taskId={taskId} dirty={dirty} disabled={disabled} savedVersionId={snapshot?.versions.at(-1)?.id ?? null} onLatestVersion={id => { if (trackedJob || id === latestVersionId) return; setFlowVersion(current => current === id ? current : id); }} />
+    <DraftFlowPanel taskId={taskId} displayedDraftVersionId={artifactVersion} dirty={dirty} disabled={disabled} savedVersionId={snapshot?.versions.at(-1)?.id ?? null} onLatestVersion={id => { if (trackedJob || id === latestVersionId) return; setFlowVersion(current => current === id ? current : id); }} />
   </section></ThemeContext.Provider>;
 }

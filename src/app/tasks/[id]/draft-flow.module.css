@@ -1,6 +1,7 @@
 .panel { margin: 22px 0; padding-top: 18px; border-top: 1px solid #d9dedb; overflow-wrap: anywhere; min-width: 0; }
 .panel button { min-height: 44px; height: auto; max-width: 100%; white-space: normal; padding: 10px 12px; }
 .panel [tabindex="-1"]:focus { outline: 3px solid #397dd1; outline-offset: 3px; }
+.completion:focus { outline: 3px solid #397dd1; outline-offset: 3px; }
 .notice { padding: 12px; background: #fff1d6; border-radius: 8px; color: #744400; }
 .panel [data-draft-error] { color: #933326; }
 @media (max-width: 460px) { .panel button { width: 100%; } }

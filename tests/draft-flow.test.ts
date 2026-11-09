@@ -239,3 +239,54 @@ it('DF-U35 snapshotの途中で別接続がコミットしても旧ドラフト�
     expect(flow.snapshot(task.id)).toMatchObject({ draft: { version: 2 }, job: { status: 'SUCCEEDED' } });
   } finally { spy.mockRestore(); }
 });
+
+it.each(['create', 'revise'])('DF-U36 %s のロールバック後に別接続が確定した同じ次版ファイルを削除しない', async action => {
+  const { task, version } = await drafted();
+  const previous = preparations.listArtifacts(task.id)[0];
+  const nextPath = join(directory, 'artifacts', `${previous.id}-v2.md`);
+  const committedContent = '# 別接続が確定したドラフト';
+  db.exec("CREATE TRIGGER fail_draft_link BEFORE INSERT ON draft_version_links BEGIN SELECT RAISE(ABORT, '保存途中の障害'); END");
+  const transaction = Database.prototype.transaction;
+  let committed = false;
+  const spy = vi.spyOn(Database.prototype, 'transaction').mockImplementation(function (this: Database.Database, callback) {
+    const run = transaction.call(this, callback);
+    return Object.assign(run.bind(undefined), {
+      default: run.default, deferred: run.deferred, exclusive: run.exclusive,
+      immediate: new Proxy(run.immediate, {
+          apply(immediate, receiver, args) {
+            try { return Reflect.apply(immediate, receiver, args); }
+            catch (error) {
+              if (!committed && error instanceof Error && error.message === '保存途中の障害') {
+                expect(readFileSync(nextPath, 'utf8')).not.toBe(committedContent);
+                db.exec('DROP TRIGGER fail_draft_link');
+                transaction.call(db, () => {
+                  writeFileSync(nextPath, committedContent);
+                  const nextId = randomUUID();
+                  db.prepare(`INSERT INTO artifact_versions(id,artifact_id,version_number,parent_version_id,content,file_name,change_summary,created_at,mode,fallback_reason,job_id,save_status,plan_json)
+                    SELECT ?,artifact_id,2,id,?,?,change_summary,created_at,mode,fallback_reason,NULL,save_status,plan_json FROM artifact_versions WHERE id=?`)
+                    .run(nextId, committedContent, `${previous.id}-v2.md`, previous.versionId);
+                  db.prepare('UPDATE artifacts SET current_version=2 WHERE id=?').run(previous.id);
+                  db.prepare(`INSERT INTO draft_version_links(artifact_version_id,task_id,breakdown_version_id,source,created_at)
+                    SELECT ?,task_id,breakdown_version_id,'REVISE',created_at FROM draft_version_links WHERE artifact_version_id=?`).run(nextId, previous.versionId);
+                }).immediate();
+                committed = true;
+              }
+              throw error;
+            }
+          },
+      }),
+    });
+  });
+  try {
+    if (action === 'create') {
+      flow.enqueue(task.id, version.id, 'failed-save');
+      expect(await flow.runNextDraft(tasks, mock())).toMatchObject({ status: 'FAILED', errorCode: 'GENERATION_FAILED' });
+    } else {
+      await expect(flow.reviseDraft(task.id, '失敗する改訂', tasks, mock())).rejects.toThrow('保存途中の障害');
+    }
+    expect(committed).toBe(true);
+    expect(preparations.listArtifacts(task.id)).toMatchObject([{ version: 1 }, { version: 2, content: committedContent }]);
+    expect(readFileSync(nextPath, 'utf8')).toBe(committedContent);
+    expect(readFileSync(previous.path, 'utf8')).toBe(previous.content);
+  } finally { spy.mockRestore(); }
+});
