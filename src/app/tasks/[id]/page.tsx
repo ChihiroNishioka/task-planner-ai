@@ -14,10 +14,11 @@ import { aiStatusLabel, categoryLabel, fallbackGuidance, inputTypeLabel, jobStat
 const inputListSchema = z.object({ inputs: z.array(z.object({ id: z.string(), name: z.string(), type: z.enum(['AUDIO', 'IMAGE', 'PDF']), mode: z.literal('mock') })) });
 const queuedJobSchema = z.object({ job: preparationJobSchema, label: z.string() });
 const latestArtifactSchema = z.object({ artifacts: z.array(z.object({
-  versionId: z.string(), version: z.number(), mode: z.enum(['ai', 'mock', 'mock_fallback']), fallbackReason: z.string().nullable(), modeLabel: z.string(),
+  versionId: z.string(), version: z.number(), source: z.enum(['CREATE', 'REVISE']).nullable().optional(), mode: z.enum(['ai', 'mock', 'mock_fallback']), fallbackReason: z.string().nullable(), modeLabel: z.string(),
   plan: z.object({ steps: z.array(z.string()) }), content: z.string(),
 })) });
 type LatestArtifact = z.infer<typeof latestArtifactSchema>['artifacts'][number];
+const breakdownReadyMessage = '分解ができました。内容を確認して「この分解でドラフトを作る」を押してください。';
 const POLL_MS = 2000;
 const POLL_LIMIT = 180;
 const scheduleResponseSchema = z.object({ schedule: scheduleRecordSchema.nullable(), label: z.literal('モック') });
@@ -36,6 +37,7 @@ export default function TaskDetail({ params }: { params: Promise<{ id: string }>
   const [scheduleMessage, setScheduleMessage] = useState('');
   const [scheduling, setScheduling] = useState(false);
   const [latest, setLatest] = useState<LatestArtifact | null>(null);
+  const [breakdownVersionId, setBreakdownVersionId] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
   const loadLatest = useCallback(async (taskId: string) => {
     const response = await fetch(`/api/tasks/${taskId}/artifacts`);
@@ -53,7 +55,7 @@ export default function TaskDetail({ params }: { params: Promise<{ id: string }>
         if (!response.ok) continue;
         const { task: value } = taskResponseSchema.parse(await response.json());
         setTask((current) => current ? { ...current, aiStatus: value.aiStatus } : current);
-        if (value.aiStatus === 'READY') { const count = await loadLatest(taskId); setJobMessage(`${count}件の成果物があります。`); return; }
+        if (value.aiStatus === 'READY') { const count = await loadLatest(taskId); setJobMessage(count ? `${count}件の成果物があります。` : breakdownReadyMessage); return; }
         if (value.aiStatus === 'CANCELLED') { setJobMessage('タスクの完了・中止により AI 準備を止めました。'); return; }
         if (value.aiStatus === 'FAILED') { setJobMessage('準備ジョブが失敗しました。もう一度依頼してください。'); return; }
       }
@@ -78,7 +80,7 @@ export default function TaskDetail({ params }: { params: Promise<{ id: string }>
       if (active) {
         setTask(value);
         setLatest(artifactList.at(-1) ?? null);
-        setJobMessage(artifactCount ? `${artifactCount}件の成果物があります。` : '');
+        setJobMessage(artifactCount ? `${artifactCount}件の成果物があります。` : value.aiStatus === 'READY' ? breakdownReadyMessage : '');
         if (['QUEUED', 'RUNNING'].includes(value.aiStatus)) void waitForGeneration(value.id);
         const deadline = scheduleData.schedule?.deadline;
         setScheduledDeadline(deadline ?? null);
@@ -172,14 +174,14 @@ export default function TaskDetail({ params }: { params: Promise<{ id: string }>
     } finally { setScheduling(false); }
   }
   return <main className="shell"><header className="topbar"><Link href="/" className="back-link">← タスク一覧</Link><span className="mock-label">モック</span></header>
-    {loading ? <p className="state" role="status">読み込み中…</p> : error ? <div className="state error" role="alert">{error}</div> : task ? <article className="detail-card"><p className="eyebrow">タスク詳細</p><h1>{task.title}</h1><p className="detail-label">元の入力</p><p>{task.originalInput || '入力なし'}</p><p className="detail-label">期限</p><p>{task.deadline ?? '期限なし'}</p><p className="detail-label">状態</p><p>{statusLabel(task.status)} / AI {aiStatusLabel(task.aiStatus)}</p><StatusControl key={task.id} task={task} deadline={scheduledDeadline ?? task.deadline} onTask={setTask} /><button className="primary-button" aria-describedby={isClosedTaskStatus(task.status) ? 'closed-task-guidance' : undefined} disabled={preparing || generating || isClosedTaskStatus(task.status)} onClick={() => void prepareTask()}>{preparing ? '準備中…' : generating ? 'AIが作成中…' : latest ? 'AIでもう一度作る' : 'AI準備を依頼'}</button><p role="status">{jobMessage}</p>{isClosedTaskStatus(task.status) ? <p id="closed-task-guidance">完了・中止のタスクは、AI準備と期限の設定ができません。上の「状態」で未着手か進行中に戻すと使えます。</p> : null}{generating ? <p className="state ai-loading" role="status">AIが作成中…（タスク分解とドラフト。1〜2分かかることがあります）</p> : null}<BreakdownEditor taskId={task.id} artifactVersion={latest?.versionId ?? null} disabled={isClosedTaskStatus(task.status)} />{latest ? <AiResult artifact={latest} /> : null}<form className="schedule-form" aria-describedby={isClosedTaskStatus(task.status) ? 'closed-task-guidance closed-schedule-guidance' : undefined} onSubmit={saveSchedule}><label htmlFor="task-deadline-time">締切日時（日本時間）</label>{isClosedTaskStatus(task.status) ? <p id="closed-schedule-guidance">完了・中止のため設定できません。</p> : null}<input id="task-deadline-time" aria-describedby={isClosedTaskStatus(task.status) ? 'closed-task-guidance closed-schedule-guidance' : undefined} disabled={isClosedTaskStatus(task.status) || scheduling} type="datetime-local" value={deadlineTime} onChange={(event) => setDeadlineTime(event.target.value)} /><button className="secondary-button" aria-describedby={isClosedTaskStatus(task.status) ? 'closed-task-guidance closed-schedule-guidance' : undefined} disabled={scheduling || isClosedTaskStatus(task.status)}>{scheduling ? '保存中…' : '期限と通知を設定'}</button><p role="status">{scheduleMessage}</p></form><p className="detail-label">カテゴリ・種別</p><p>{categoryLabel(task.category)} / {taskTypeLabel(task.taskType)}</p><ReferencePanel taskId={task.id}><p>画像・PDF・音声ファイルを添付できます。解析はモックのため行いません。</p><form onSubmit={addFiles}><label htmlFor="task-files">ファイルを選択</label><input id="task-files" name="files" type="file" accept="image/*,application/pdf,audio/*" multiple /><button className="secondary-button" disabled={uploading}>{uploading ? '保存中…' : '添付を保存'}</button></form><p role="status">{uploadMessage}</p>{uploadMessage.startsWith('添付を読み込めません') ? <button type="button" className="secondary-button" onClick={() => void loadFiles(task.id)}>添付を再読み込み</button> : null}{!uploadMessage && !inputs.length ? <p>ファイルはまだありません。</p> : null}<ul>{inputs.map((input) => <li key={input.id}>{inputTypeLabel(input.type)}・{input.name}・モック</li>)}</ul></ReferencePanel><p className="detail-label">版履歴</p><p>{latest ? `最新 v${latest.version}・${latest.modeLabel}` : 'ドラフトはまだありません。'}</p><Link className="primary-button link-button" href={`/tasks/${task.id}/review`}>ドラフトレビュー</Link></article> : null}
+    {loading ? <p className="state" role="status">読み込み中…</p> : error ? <div className="state error" role="alert">{error}</div> : task ? <article className="detail-card"><p className="eyebrow">タスク詳細</p><h1>{task.title}</h1><p className="detail-label">元の入力</p><p>{task.originalInput || '入力なし'}</p><p className="detail-label">期限</p><p>{task.deadline ?? '期限なし'}</p><p className="detail-label">状態</p><p>{statusLabel(task.status)} / AI {aiStatusLabel(task.aiStatus)}</p><StatusControl key={task.id} task={task} deadline={scheduledDeadline ?? task.deadline} onTask={setTask} /><button className="primary-button" aria-describedby={isClosedTaskStatus(task.status) ? 'closed-task-guidance' : undefined} disabled={preparing || generating || isClosedTaskStatus(task.status)} onClick={() => void prepareTask()}>{preparing ? '準備中…' : generating ? 'AIが分解を作成中…' : latest || breakdownVersionId ? 'AIで分解を作り直す' : 'AI準備を依頼'}</button><p role="status">{jobMessage}</p>{isClosedTaskStatus(task.status) ? <p id="closed-task-guidance">完了・中止のタスクは、AI準備と期限の設定ができません。上の「状態」で未着手か進行中に戻すと使えます。</p> : null}{generating ? <p className="state ai-loading" role="status">AIが分解を作成中…（1〜2分かかることがあります）</p> : null}<BreakdownEditor onLatestVersion={setBreakdownVersionId} taskId={task.id} artifactVersion={latest?.versionId ?? null} disabled={isClosedTaskStatus(task.status)} />{latest ? <AiResult artifact={latest} /> : null}<form className="schedule-form" aria-describedby={isClosedTaskStatus(task.status) ? 'closed-task-guidance closed-schedule-guidance' : undefined} onSubmit={saveSchedule}><label htmlFor="task-deadline-time">締切日時（日本時間）</label>{isClosedTaskStatus(task.status) ? <p id="closed-schedule-guidance">完了・中止のため設定できません。</p> : null}<input id="task-deadline-time" aria-describedby={isClosedTaskStatus(task.status) ? 'closed-task-guidance closed-schedule-guidance' : undefined} disabled={isClosedTaskStatus(task.status) || scheduling} type="datetime-local" value={deadlineTime} onChange={(event) => setDeadlineTime(event.target.value)} /><button className="secondary-button" aria-describedby={isClosedTaskStatus(task.status) ? 'closed-task-guidance closed-schedule-guidance' : undefined} disabled={scheduling || isClosedTaskStatus(task.status)}>{scheduling ? '保存中…' : '期限と通知を設定'}</button><p role="status">{scheduleMessage}</p></form><p className="detail-label">カテゴリ・種別</p><p>{categoryLabel(task.category)} / {taskTypeLabel(task.taskType)}</p><ReferencePanel taskId={task.id}><p>画像・PDF・音声ファイルを添付できます。解析はモックのため行いません。</p><form onSubmit={addFiles}><label htmlFor="task-files">ファイルを選択</label><input id="task-files" name="files" type="file" accept="image/*,application/pdf,audio/*" multiple /><button className="secondary-button" disabled={uploading}>{uploading ? '保存中…' : '添付を保存'}</button></form><p role="status">{uploadMessage}</p>{uploadMessage.startsWith('添付を読み込めません') ? <button type="button" className="secondary-button" onClick={() => void loadFiles(task.id)}>添付を再読み込み</button> : null}{!uploadMessage && !inputs.length ? <p>ファイルはまだありません。</p> : null}<ul>{inputs.map((input) => <li key={input.id}>{inputTypeLabel(input.type)}・{input.name}・モック</li>)}</ul></ReferencePanel><p className="detail-label">版履歴</p><p>{latest ? `最新 v${latest.version}・${latest.modeLabel}` : 'ドラフトはまだありません。'}</p><Link className="primary-button link-button" href={`/tasks/${task.id}/review`}>ドラフトレビュー</Link></article> : null}
   </main>;
 }
 
 function AiResult({ artifact }: { artifact: LatestArtifact }) {
   const fallback = artifact.mode !== 'ai';
   return <section className="ai-result" aria-label="AIの準備結果"><p className={fallback ? 'mode-badge mode-fallback' : 'mode-badge mode-ai'} data-mode={artifact.mode}>{artifact.modeLabel}</p>
-    {fallback && artifact.mode === 'mock_fallback' ? <p className="fallback-note">実AIが使えなかったため、固定のモック内容を表示しています。{fallbackGuidance(artifact.version)}<span className="reason-code">（理由コード {artifact.fallbackReason ?? '不明'}）</span></p> : null}
+    {fallback && artifact.mode === 'mock_fallback' ? <p className="fallback-note">実AIが使えなかったため、固定のモック内容を表示しています。{fallbackGuidance(artifact.version, artifact.source)}<span className="reason-code">（理由コード {artifact.fallbackReason ?? '不明'}）</span></p> : null}
     <h2>ドラフト v{artifact.version}</h2><pre className="ai-draft">{artifact.content}</pre></section>;
 }
 

@@ -105,7 +105,9 @@ export class ScheduleStore {
         OR EXISTS (SELECT 1 FROM task_schedules WHERE task_schedules.id = notifications.schedule_id AND task_schedules.status = 'CANCELLED'))`).run();
     const delivered = this.db.prepare(`UPDATE notifications SET status = 'MOCK_DELIVERED', message = CASE
       WHEN EXISTS (SELECT 1 FROM tasks WHERE tasks.id = notifications.task_id AND tasks.ai_status = 'READY')
-      THEN '締切前のモック通知です。準備済みのドラフトを確認してください。'
+      THEN CASE WHEN EXISTS (SELECT 1 FROM artifacts WHERE artifacts.task_id = notifications.task_id)
+        THEN '締切前のモック通知です。準備済みのドラフトを確認してください。'
+        ELSE '締切前のモック通知です。分解ができています。ドラフトを作って確認してください。' END
       ELSE '締切前のモック通知です。ドラフトは未完成の可能性があります。準備状況を確認してください。' END
       WHERE status = 'SCHEDULED' AND julianday(scheduled_at) <= julianday(?)
         AND EXISTS (SELECT 1 FROM tasks WHERE tasks.id = notifications.task_id

@@ -7,8 +7,8 @@ import { scheduleRecordSchema } from '../src/domain/scheduling';
 import { taskListResponseSchema, taskResponseSchema } from '../src/domain/task';
 import { requiredDirectory } from './helpers/required-e2e-directory';
 
-const dataDirectory = requiredDirectory('E2E_DATA_DIR', '/workspace/dev/tp-status-data');
-const shots = requiredDirectory('SHOT_DIR', '/workspace/dev/tp-status-runs');
+const dataDirectory = requiredDirectory('E2E_DATA_DIR', process.env.E2E_DATA_ROOT ?? '/workspace/dev/tp-status-data');
+const shots = requiredDirectory('SHOT_DIR', process.env.E2E_SHOT_ROOT ?? '/workspace/dev/tp-status-runs');
 const createdSchema = z.object({ task: z.object({ id: z.string().uuid(), title: z.string() }) });
 const scheduleSchema = z.object({ schedule: scheduleRecordSchema.nullable() });
 const test = base.extend<{ task: z.infer<typeof createdSchema>['task'] }>({

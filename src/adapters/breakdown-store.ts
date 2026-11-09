@@ -28,7 +28,12 @@ export class BreakdownStore {
       id TEXT PRIMARY KEY, task_id TEXT NOT NULL, status TEXT NOT NULL, error_code TEXT,
       base_version TEXT, task_revision INTEGER NOT NULL, command_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
     );
-    CREATE INDEX IF NOT EXISTS breakdown_queue ON breakdown_jobs(status, created_at);`);
+    CREATE INDEX IF NOT EXISTS breakdown_queue ON breakdown_jobs(status, created_at);
+    CREATE TABLE IF NOT EXISTS draft_version_links (
+      artifact_version_id TEXT PRIMARY KEY, task_id TEXT NOT NULL,
+      breakdown_version_id TEXT, source TEXT NOT NULL, created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS draft_version_links_task ON draft_version_links(task_id, created_at);`);
   }
 
   snapshot(taskId: string): BreakdownSnapshot {
@@ -44,6 +49,7 @@ export class BreakdownStore {
       if (task.deleted_at) return;
       for (const artifact of artifacts) {
         if (this.db.prepare('SELECT id FROM breakdown_versions WHERE source_artifact = ?').get(artifact.versionId)) continue;
+        if (this.db.prepare('SELECT artifact_version_id FROM draft_version_links WHERE artifact_version_id = ?').get(artifact.versionId)) continue;
         const steps = storedBreakdownStepsSchema.parse(artifact.plan.steps);
         this.append(taskId, { kind: 'import', steps, mode: artifact.mode, fallbackReason: artifact.fallbackReason, comment: '', sourceVersion: null }, artifact.versionId);
       }

@@ -390,9 +390,11 @@ for (const width of [390, 1280]) {
     await page.goto(`/tasks/${id}`);
     const editor = editorOf(page);
     await expect(firstOf(editor)).toHaveValue('旧版を読む');
-    expect((await request.post(api(id), { data: { action: 'save', baseVersion: initial.versions.at(-1)!.id, requestKey: randomUUID(), steps: ['別の場所で保存した最新版'] } })).status()).toBe(200);
+    // ドラフトのパネルは別の場所での保存を数秒で検知し、未編集なら分解を読み直す（draft-flow 仕様 §6）。
+    // 古い基準版のまま依頼する競合を確かめるため、先に編集してから別の場所で保存する。
     await firstOf(editor).fill('載せ替える入力');
     await commentOf(editor).fill('載せ替えるコメント');
+    expect((await request.post(api(id), { data: { action: 'save', baseVersion: initial.versions.at(-1)!.id, requestKey: randomUUID(), steps: ['別の場所で保存した最新版'] } })).status()).toBe(200);
     const conflict = page.waitForResponse(response => response.request().method() === 'POST' && response.url().endsWith(api(id)));
     await editor.getByRole('button', { name: 'このコメントでAIに作り直してもらう', exact: true }).click();
     expect((await conflict).status()).toBe(409);

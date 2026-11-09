@@ -1,4 +1,4 @@
-import { referenceStore, breakdownStore, aiMode, preparationAdapter, preparationStore, scheduleStore, taskStore, workerStatusStore } from '../adapters/runtime';
+import { referenceStore, breakdownStore, draftFlowStore, aiMode, preparationAdapter, preparationStore, scheduleStore, taskStore, workerStatusStore } from '../adapters/runtime';
 import { WORKER_BEAT_MS } from '../adapters/worker-status';
 
 let running = true;
@@ -14,11 +14,11 @@ async function run() {
   try {
     while (running) {
       await scheduleStore.processDue(new Date(), taskStore, preparationStore);
-      const job = await preparationStore.runNext(taskStore, preparationAdapter);
-      if (job) breakdownStore.syncArtifacts(job.taskId, preparationStore);
+      const job = await draftFlowStore.runNextPreparation(taskStore, preparationAdapter);
       const breakdownJob = await breakdownStore.runNext(taskStore, preparationStore, preparationAdapter);
+      const draftJob = await draftFlowStore.runNextDraft(taskStore, preparationAdapter);
       if (once) break;
-      if (!job && !breakdownJob) await new Promise((resolve) => setTimeout(resolve, 1000));
+      if (!job && !breakdownJob && !draftJob) await new Promise((resolve) => setTimeout(resolve, 1000));
     }
   } finally {
     if (timer) {
@@ -32,6 +32,7 @@ void run().catch(() => {
   process.exitCode = 1;
 }).finally(() => {
   referenceStore.close();
+  draftFlowStore.close();
   workerStatusStore.close();
   breakdownStore.close();
   preparationStore.close();

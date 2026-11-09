@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ScheduleStore } from '../src/adapters/scheduling';
 import { calculateSchedule } from '../src/domain/scheduling';
 import { TaskStore } from '../src/adapters/task-store';
+import { MockAiAdapter } from '../src/adapters/mock-ai';
 import { PreparationStore } from '../src/adapters/preparation-store';
 
 describe('Phase 4 deadline scheduling', () => {
@@ -94,4 +95,17 @@ describe('Phase 4 deadline scheduling', () => {
     expect(schedules.notifications(currentTask.id)[0]?.status).toBe('MOCK_DELIVERED');
     expect(tasks.get(currentTask.id)?.aiStatus).toBe('QUEUED');
   });
+  it.each([false, true])('READY時はドラフトの有無（%s）に合わせたモック通知を返す', async (hasDraft) => {
+    const currentTask = task();
+    schedules.schedule(currentTask.id, calculateSchedule({ deadline: '2026-11-13T17:00:00+09:00', now: new Date('2026-11-01T00:00:00Z') }));
+    await schedules.processDue(new Date('2026-11-11T23:00:00Z'), tasks, preparations);
+    if (hasDraft) await preparations.runNext(tasks, new MockAiAdapter());
+    else tasks.updateAiStatus(currentTask.id, 'READY');
+    expect(preparations.listArtifacts(currentTask.id)).toHaveLength(hasDraft ? 1 : 0);
+    expect((await schedules.processDue(new Date('2026-11-12T00:00:00Z'), tasks, preparations)).delivered).toBe(1);
+    expect(schedules.notifications(currentTask.id)[0]).toMatchObject({ status: 'MOCK_DELIVERED', mode: 'mock', message: hasDraft
+      ? '締切前のモック通知です。準備済みのドラフトを確認してください。'
+      : '締切前のモック通知です。分解ができています。ドラフトを作って確認してください。' });
+  });
+
 });
