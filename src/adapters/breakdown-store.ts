@@ -1,12 +1,13 @@
 import Database from 'better-sqlite3';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { isClosedTaskStatus, taskStatusSchema } from '../domain/task';
 import { breakdownVersionLabel, breakdownGenerationSchema, breakdownCommandSchema, breakdownJobSchema, breakdownSnapshotSchema, storedBreakdownStepsSchema, breakdownVersionSchema, BreakdownError, type BreakdownSnapshot, type BreakdownVersion } from '../domain/breakdown';
 import type { TaskStore } from './task-store';
 import type { PreparationStore } from './preparation-store';
 import type { PreparationAdapter } from './mock-ai';
 
-const taskStateSchema = z.object({ status: z.string(), revision: z.number(), deleted_at: z.string().nullable() });
+const taskStateSchema = z.object({ status: taskStatusSchema, revision: z.number(), deleted_at: z.string().nullable() });
 const jobRowSchema = z.object({ id: z.string(), task_id: z.string(), status: breakdownJobSchema.shape.status, error_code: z.string().nullable(), base_version: z.string().nullable(), created_at: z.string(), command_json: z.string(), task_revision: z.number() });
 
 export class BreakdownStore {
@@ -134,7 +135,7 @@ export class BreakdownStore {
   private assertRunnable(taskId: string) {
     const row = this.taskState(taskId);
     if (row.deleted_at) throw new BreakdownError('NOT_FOUND');
-    if (['COMPLETED', 'CANCELLED'].includes(row.status)) throw new BreakdownError('TASK_NOT_RUNNABLE');
+    if (isClosedTaskStatus(row.status)) throw new BreakdownError('TASK_NOT_RUNNABLE');
   }
   private assertBase(taskId: string, baseVersion: string | null) {
     if ((this.snapshot(taskId).versions.at(-1)?.id ?? null) !== baseVersion) throw new BreakdownError('CONFLICT');

@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import Database from 'better-sqlite3';
 import { z } from 'zod';
-import type { Task } from '../domain/task';
+import { isClosedTaskStatus, taskStatusSchema, type Task } from '../domain/task';
 import type { TaskStore } from './task-store';
 import type { PreparationAdapter } from './mock-ai';
 import { artifactModeSchema, generationSchema, preparationJobSchema, workPlanSchema, type ArtifactMode, type PreparationJob, type WorkPlan } from '../domain/preparation';
@@ -30,6 +30,10 @@ export type StoredArtifact = {
   content: string;
   changeSummary: string;
 };
+
+export class PreparationTaskNotRunnableError extends Error {
+  constructor() { super('このタスクは準備を開始できません。'); }
+}
 
 export class PreparationStore {
   private readonly db: Database.Database;
@@ -67,16 +71,25 @@ export class PreparationStore {
   }
 
   enqueue(task: Task, operationKey: string = randomUUID()): PreparationJob {
-    if (task.deletedAt || ['COMPLETED', 'CANCELLED'].includes(task.status)) throw new Error('このタスクは準備を開始できません。');
-    const prior = this.db.prepare('SELECT * FROM preparation_jobs WHERE task_id = ? AND operation_key = ?').get(task.id, operationKey);
-    if (prior) return toJob(jobRowSchema.parse(prior));
-    const now = new Date().toISOString();
-    const job = preparationJobSchema.parse({ id: randomUUID(), taskId: task.id, status: 'QUEUED', mode: 'mock', createdAt: now, updatedAt: now, errorCode: null });
-    this.db.prepare('INSERT INTO preparation_jobs(id, task_id, status, created_at, updated_at, error_code, operation_key) VALUES (?, ?, ?, ?, ?, NULL, ?)')
-      .run(job.id, task.id, job.status, now, now, operationKey);
-    this.db.prepare('UPDATE tasks SET ai_status = ?, updated_at = ?, revision = revision + 1 WHERE id = ?')
-      .run('QUEUED', now, task.id);
-    return job;
+    return this.db.transaction(() => {
+      const current = z.object({ status: taskStatusSchema, deleted_at: z.string().nullable() }).nullable().parse(
+        this.db.prepare('SELECT status, deleted_at FROM tasks WHERE id = ?').get(task.id) ?? null);
+      if (!current || current.deleted_at || isClosedTaskStatus(current.status)) throw new PreparationTaskNotRunnableError();
+      if (operationKey.startsWith('schedule:')) {
+        const schedule = this.db.prepare("SELECT id FROM task_schedules WHERE id = ? AND task_id = ? AND status = 'RUNNING'")
+          .get(operationKey.slice('schedule:'.length), task.id);
+        if (!schedule) throw new PreparationTaskNotRunnableError();
+      }
+      const prior = this.db.prepare('SELECT * FROM preparation_jobs WHERE task_id = ? AND operation_key = ?').get(task.id, operationKey);
+      if (prior) return toJob(jobRowSchema.parse(prior));
+      const now = new Date().toISOString();
+      const job = preparationJobSchema.parse({ id: randomUUID(), taskId: task.id, status: 'QUEUED', mode: 'mock', createdAt: now, updatedAt: now, errorCode: null });
+      this.db.prepare('INSERT INTO preparation_jobs(id, task_id, status, created_at, updated_at, error_code, operation_key) VALUES (?, ?, ?, ?, ?, NULL, ?)')
+        .run(job.id, task.id, job.status, now, now, operationKey);
+      this.db.prepare('UPDATE tasks SET ai_status = ?, updated_at = ?, revision = revision + 1 WHERE id = ?')
+        .run('QUEUED', now, task.id);
+      return job;
+    }).immediate();
   }
 
   async runNext(tasks: TaskStore, adapter: PreparationAdapter): Promise<PreparationJob | null> {
@@ -90,7 +103,7 @@ export class PreparationStore {
     }).immediate();
     if (!queued) return null;
     const task = tasks.get(queued.task_id);
-    if (!task || ['COMPLETED', 'CANCELLED'].includes(task.status)) return this.finish(queued.id, tasks, 'CANCELLED', 'TASK_NOT_RUNNABLE');
+    if (!task || isClosedTaskStatus(task.status)) return this.finish(queued.id, tasks, 'CANCELLED', 'TASK_NOT_RUNNABLE');
     tasks.updateAiStatus(task.id, 'RUNNING');
     try {
       const generation = generationSchema.parse(await adapter.generate(task));
@@ -127,7 +140,7 @@ export class PreparationStore {
     const task = tasks.get(taskId);
     const previous = this.listArtifacts(taskId).at(-1);
     if (!task || !previous) throw new Error('改訂する成果物がありません。');
-    if (task.status === 'COMPLETED' || task.status === 'CANCELLED') throw new Error('完了または中止したタスクは改訂できません。');
+    if (isClosedTaskStatus(task.status)) throw new Error('完了または中止したタスクは改訂できません。');
     if (!adapter.revise) throw new Error('このAIアダプターは改訂に対応していません。');
     const generation = generationSchema.parse(await adapter.revise(task, previous.content, feedback));
     const version = previous.version + 1;
@@ -139,10 +152,10 @@ export class PreparationStore {
     try {
       // 生成待ちの間にタスクや版が変わっていないかを、書き込みロックを持ったまま検証してから保存する。
       this.db.transaction(() => {
-        const current = z.object({ status: z.string(), revision: z.number(), deleted_at: z.string().nullable() }).nullable()
+        const current = z.object({ status: taskStatusSchema, revision: z.number(), deleted_at: z.string().nullable() }).nullable()
           .parse(this.db.prepare('SELECT status, revision, deleted_at FROM tasks WHERE id = ?').get(taskId) ?? null);
         if (!current || current.deleted_at) throw new Error('改訂中にタスクが削除されたため、修正版を保存しませんでした。');
-        if (current.status === 'COMPLETED' || current.status === 'CANCELLED') throw new Error('改訂中にタスクが完了または中止されたため、修正版を保存しませんでした。');
+        if (isClosedTaskStatus(current.status)) throw new Error('改訂中にタスクが完了または中止されたため、修正版を保存しませんでした。');
         if (current.revision !== task.revision) throw new Error('改訂中にタスクが変更されたため、修正版を保存しませんでした。もう一度お試しください。');
         const latest = z.object({ id: z.string(), version_number: z.number() }).nullable().parse(this.db.prepare(
           'SELECT id, version_number FROM artifact_versions WHERE artifact_id = ? ORDER BY version_number DESC LIMIT 1').get(previous.id) ?? null);

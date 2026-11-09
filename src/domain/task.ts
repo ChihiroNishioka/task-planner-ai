@@ -1,6 +1,10 @@
 import { z } from 'zod';
 
 export const taskStatusSchema = z.enum(['OPEN', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED']);
+export type TaskStatus = z.infer<typeof taskStatusSchema>;
+export const isClosedTaskStatus = (status: TaskStatus): boolean => status === 'COMPLETED' || status === 'CANCELLED';
+export const scheduleEffectSchema = z.enum(['NONE', 'STOPPED', 'RESCHEDULED', 'NOTIFICATION_RESTORED', 'DEADLINE_PASSED']);
+export type ScheduleEffect = z.infer<typeof scheduleEffectSchema>;
 export const aiStatusSchema = z.enum(['NOT_REQUIRED', 'WAITING_CONFIRMATION', 'QUEUED', 'RUNNING', 'READY', 'FAILED', 'CANCELLED']);
 export const taskTypeSchema = z.enum(['SOLUTION_DESIGN', 'EMAIL_REPLY', 'ASSIGNMENT', 'GENERAL']);
 export const taskCategorySchema = z.enum(['WORK', 'PERSONAL', 'STUDY']);
@@ -26,6 +30,7 @@ export const taskSchema = taskInputSchema.extend({
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
   deletedAt: z.string().datetime().nullable(),
+  completedAt: z.string().datetime().nullable().default(null),
   syncStatus: z.literal('PENDING_MOCK'),
 });
 
