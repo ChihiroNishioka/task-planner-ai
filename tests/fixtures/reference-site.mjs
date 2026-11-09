@@ -4,6 +4,13 @@ const server = createServer((request, response) => {
   switch (request.url) {
     case '/health': response.writeHead(200, { 'content-type': 'text/plain' }); response.end('fixture'); break;
     case '/failed': response.writeHead(503, { 'content-type': 'text/plain' }); response.end('fixture failure'); break;
+    case '/forbidden': response.writeHead(403, { 'content-type': 'text/plain' }); response.end('fixture refused'); break;
+    case '/gone': response.writeHead(404, { 'content-type': 'text/plain' }); response.end('fixture missing'); break;
+    case '/rate': response.writeHead(429, { 'content-type': 'text/plain' }); response.end('fixture limited'); break;
+    case '/note-short': response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); response.end(`<html><head><title>一部のみの記事</title></head><body><article>${'参考になる記事本文。'.repeat(100)}<p>この続きをみるには</p></article></body></html>`); break;
+    case '/long': response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); response.end(`<html><head><title>長い記事</title></head><body><main>${'長'.repeat(50001)}</main></body></html>`); break;
+    case '/svg-title': response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); response.end('<html><head><title>記事の正しいタイトル</title></head><body><svg><title>British Broadcasting Corporation</title></svg><svg><title>地域を選択</title></svg><main>記事の正しい冒頭です。</main></body></html>'); break;
+    case '/menu-main': response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); response.end('<html><head><title>メニューを除く記事</title></head><body><header>閉じる 閉じる メニュー</header><nav>Skip to content</nav><main>本文の正しい冒頭です。</main><footer>フッターの除去対象</footer></body></html>'); break;
     case '/redirect': response.writeHead(302, { location: 'http://example.com/success' }); response.end(); break;
     case '/private': response.writeHead(302, { location: 'http://127.0.0.1/' }); response.end(); break;
     case '/loop': response.writeHead(302, { location: 'http://example.com/loop' }); response.end(); break;

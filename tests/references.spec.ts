@@ -65,16 +65,18 @@ for (const width of [390, 1280]) {
       await panel.getByRole('button', { name: 'URLを追加', exact: true }).click();
       const failedUrl = panel.locator('[data-reference-kind="URL"]').filter({ has: page.getByRole('link', { name: 'http://example.com/failed', exact: true }) });
       await expect(failedUrl).toContainText('取得失敗');
-      await expect(failedUrl.getByRole('button', { name: '再取得', exact: true })).toBeVisible();
+      await expect(failedUrl.locator('button[data-reference-action="refetch"]')).toBeVisible();
       await capture(page, `${width}-url-failed.png`);
       await panel.getByLabel('関連するURL').fill('http://127.0.0.1/');
       await panel.getByRole('button', { name: 'URLを追加', exact: true }).click();
-      const loopbackUrl = panel.locator('[data-reference-kind="URL"]').filter({ has: page.getByRole('link', { name: 'http://127.0.0.1/', exact: true }) });
+      const loopbackUrl = panel.locator('[data-reference-kind="URL"]').filter({ has: page.locator('span').filter({ hasText: /^http:\/\/127\.0\.0\.1\/$/ }) });
       await expect(loopbackUrl).toContainText('安全上の理由');
+      await expect(loopbackUrl.locator('a[href]')).toHaveCount(0);
       await panel.getByLabel('関連するURL').fill('http://private.example.com/');
       await panel.getByRole('button', { name: 'URLを追加', exact: true }).click();
-      const privateUrl = panel.locator('[data-reference-kind="URL"]').filter({ has: page.getByRole('link', { name: 'http://private.example.com/', exact: true }) });
+      const privateUrl = panel.locator('[data-reference-kind="URL"]').filter({ has: page.locator('span').filter({ hasText: /^http:\/\/private\.example\.com\/$/ }) });
       await expect(privateUrl).toHaveCount(1);
+      await expect(privateUrl.locator('a[href]')).toHaveCount(0);
       await expect(privateUrl).toContainText('取得失敗');
       await expect(privateUrl).toContainText('安全上の理由');
       await page.reload();
@@ -150,13 +152,307 @@ test('URLの再取得と外部タイトルはテキスト表示、二重送信�
   await panel.getByRole('tab', { name: 'URL', exact: true }).click();
   await expect(panel).toContainText('<img src=x onerror=');
   await expect(panel.locator('img')).toHaveCount(0);
-  await panel.getByRole('button', { name: '再取得', exact: true }).click();
-  await expect(panel.getByRole('button', { name: '再取得', exact: true })).toBeDisabled();
+  await panel.locator('button[data-reference-action="refetch"]').click();
+  await expect(panel.locator('button[data-reference-action="refetch"]')).toBeDisabled();
   await expect(panel).toContainText('取得済み');
   await expect(panel).toContainText('再取得した参考資料');
 });
 
 const referenceListSchema = z.object({ references: z.array(referenceSchema) });
+
+type UrlReference = Extract<Reference, { kind: 'URL' }>;
+function syntheticUrl(taskId: string, changes: Partial<UrlReference> = {}): UrlReference {
+  const now = new Date().toISOString();
+  return { id: crypto.randomUUID(), taskId, kind: 'URL', title: '合成の参考ページ', body: '', revision: 1,
+    createdAt: now, updatedAt: now, url: 'https://example.com/article', finalUrl: null, fetchStatus: 'FAILED',
+    fetchErrorCode: 'HTTP_ERROR', fetchMode: 'fixture', fetchedAt: null, contentType: null, truncated: false, ...changes };
+}
+const failureCases = [
+  ['DNS_FAILED', 'DNS_NOT_FOUND', 'サイトが見つかりませんでした。URLに誤りがないか確認してください。'],
+  ['DNS_FAILED', 'DNS_UNAVAILABLE', 'サイトの場所を確認できませんでした。時間をおいて再取得してください。'],
+  ['DNS_FAILED', null, 'サイトの場所を確認できませんでした。URLを確認するか、時間をおいて再取得してください。'],
+  ['BLOCKED_URL', 'BLOCKED_ADDRESS', '安全上の理由で取得を止めました。公開されていない宛先の可能性があります。公開サイトでも、サーバーの名前解決の設定で止まることがあります。続く場合は管理者に伝えてください。内容が必要なら、メモに貼り付けて追加できます。'],
+  ['BLOCKED_URL', 'BLOCKED_URL_FORM', '安全上の理由で取得できない形式のURLです。ポート番号やユーザー名を付けない http / https のURLでお試しください。'],
+  ['BLOCKED_URL', null, '安全上の理由で取得できませんでした。再取得しても直らない場合は、内容をメモに貼り付けてください。'],
+  ['TIMEOUT', null, '時間内にページを取得できませんでした。時間をおいて再取得してください。'],
+  ['HTTP_ERROR', 'HTTP_REFUSED', 'サイトに取得を断られました。時間をおいて再取得するか、内容をメモに貼り付けてください。'],
+  ['HTTP_ERROR', 'HTTP_NOT_FOUND', 'ページが見つかりませんでした。URLを確認してください。'],
+  ['HTTP_ERROR', 'HTTP_SERVER', 'サイト側でエラーが起きています。時間をおいて再取得してください。'],
+  ['HTTP_ERROR', 'HTTP_OTHER', 'ページがエラーを返しました。時間をおいて再取得してください。'],
+  ['HTTP_ERROR', null, 'ページがエラーを返しました。時間をおいて再取得してください。'],
+  ['NETWORK_ERROR', null, 'ページに接続できませんでした。時間をおいて再取得してください。'],
+  ['TOO_MANY_REDIRECTS', null, '転送が多すぎて取得できませんでした。転送先のURLを直接お試しください。'],
+  ['UNSUPPORTED_TYPE', null, 'HTML またはテキストのページだけ取り込めます。内容はメモに貼り付けて追加できます。'],
+  ['TOO_LARGE', null, 'ページが大きすぎて取り込めません（2MB まで）。必要な部分をメモに貼り付けてください。'],
+  ['EMPTY_CONTENT', null, '本文を読み取れませんでした。内容が必要なら、メモに貼り付けて追加できます。'],
+  ['DECODE_FAILED', null, '本文を読み取れませんでした。内容が必要なら、メモに貼り付けて追加できます。'],
+  ['INTERRUPTED', null, '取得が中断されました。再取得してください。'],
+  ['FETCH_DISABLED', null, 'URLの取得は現在オフになっています。内容はメモに貼り付けて追加できます。'],
+] satisfies [UrlReference['fetchErrorCode'], UrlReference['fetchFailureReason'], string][];
+
+for (const viewport of [{ width: 390, height: 844, name: 'iphone-390x844' }, { width: 1280, height: 800, name: 'pc-1280x800' }]) {
+  test.describe(`URL取り込み改善 ${viewport.name}`, () => {
+    test.use({ viewport: { width: viewport.width, height: viewport.height } });
+    test('UF-E2E-01 UF-E2E-02 UF-E2E-10 UF-E2E-14 UF-E2E-15 全理由・旧コードを安全に表示する', async ({ page, request }) => {
+      const value = await task(request);
+      const oldCodes = [...new Set(failureCases.map(([code]) => code))];
+      const items = [
+        ...failureCases.map(([fetchErrorCode, fetchFailureReason], index) => syntheticUrl(value.id, { id: `failure-${index}`, fetchErrorCode, fetchFailureReason,
+          url: `https://example.com/${'long-path-'.repeat(120)}${index}` })),
+        ...oldCodes.map((fetchErrorCode, index) => syntheticUrl(value.id, { id: `old-${index}`, fetchErrorCode })),
+      ];
+      await page.route(`**/api/tasks/${value.id}/references`, route => route.fulfill({ json: { references: items } }));
+      await page.goto(`/tasks/${value.id}`);
+      const panel = page.locator('[data-reference-panel]');
+      await panel.getByRole('tab', { name: 'URL', exact: true }).click();
+      const rows = panel.locator('[data-reference-kind="URL"]');
+      await expect(rows).toHaveCount(items.length);
+      for (const [index, [code, reason, message]] of failureCases.entries()) {
+        const row = rows.nth(index);
+        const link = row.locator('.reference-url');
+        await expect(link).toHaveAttribute('title', items[index].url);
+        const geometry = await link.evaluate(element => {
+          const style = getComputedStyle(element);
+          return { clamp: style.webkitLineClamp, height: element.getBoundingClientRect().height, lineHeight: parseFloat(style.lineHeight), overflow: style.overflow };
+        });
+        expect(geometry.clamp).toBe('3');
+        expect(geometry.overflow).toBe('hidden');
+        expect(geometry.height).toBeLessThanOrEqual(geometry.lineHeight * 3 + 1);
+        const rowBounds = await row.boundingBox();
+        const formBounds = await panel.locator('.reference-form').last().boundingBox();
+        expect(rowBounds).not.toBeNull(); expect(formBounds).not.toBeNull();
+        expect(Math.abs((rowBounds?.x ?? 0) - (formBounds?.x ?? 0))).toBeLessThanOrEqual(1);
+        await expect(row.getByRole('button', { name: `${items[index].title || items[index].url}を再取得`, exact: true })).toBeVisible();
+        await expect(row.getByRole('button', { name: `${items[index].title || items[index].url}を削除`, exact: true })).toBeVisible();
+        await expect(row.locator('[data-reference-failure]')).toHaveText(message);
+        await expect(row.locator('[data-reference-failure]')).toHaveAttribute('data-reference-failure', reason ?? code ?? '');
+        await expect(row.locator('[data-reference-failure]')).not.toHaveAttribute('role');
+        if (code === 'BLOCKED_URL') {
+          await expect(row.locator('a[href]')).toHaveCount(0);
+          await expect(row.locator('span').filter({ hasText: items[index].url })).toHaveCount(1);
+        } else await expect(row.getByRole('link')).toHaveAttribute('href', items[index].url);
+      }
+      for (const [index, code] of oldCodes.entries()) {
+        const expected = failureCases.find(([candidate, reason]) => candidate === code && !reason);
+        expect(expected).toBeDefined();
+        await expect(rows.nth(failureCases.length + index).locator('[data-reference-failure]')).toHaveText(expected?.[2] ?? '');
+      }
+      expect(await panel.innerText()).not.toMatch(/\b(?:\d{1,3}\.){3}\d{1,3}\b/);
+      for (const button of await panel.getByRole('button').all()) expect(await button.evaluate(element => element instanceof HTMLElement ? element.offsetHeight : 0)).toBeGreaterThanOrEqual(44);
+      await capture(page, `${viewport.name}-urlfix-failure-messages.png`);
+    });
+
+    test('S12 S13 短いURLの理由と資料名付き操作ボタンを画面内に表示する', async ({ page, request }) => {
+      const value = await task(request);
+      const item = syntheticUrl(value.id, { id: 'failure-short', url: 'https://example.com/a', title: '取得を断られた資料', fetchErrorCode: 'HTTP_ERROR', fetchFailureReason: 'HTTP_REFUSED' });
+      await page.route(`**/api/tasks/${value.id}/references`, route => route.fulfill({ json: { references: [item] } }));
+      await page.goto(`/tasks/${value.id}`);
+      const panel = page.locator('[data-reference-panel]');
+      await panel.getByRole('tab', { name: 'URL', exact: true }).click();
+      const row = panel.locator('[data-reference-kind="URL"]');
+      await expect(row.getByRole('button', { name: '取得を断られた資料を再取得', exact: true })).toBeVisible();
+      await expect(row.getByRole('button', { name: '取得を断られた資料を削除', exact: true })).toBeVisible();
+      const reason = row.locator('[data-reference-failure]');
+      await expect(reason).toHaveText('サイトに取得を断られました。時間をおいて再取得するか、内容をメモに貼り付けてください。');
+      await reason.scrollIntoViewIfNeeded();
+      await expect(reason).toBeInViewport({ ratio: 1 });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width);
+      await row.screenshot({ path: join(shots, `${viewport.name}-urlfix-failure-short.png`), animations: 'disabled' });
+    });
+
+    test('UF-E2E-03 UF-E2E-04 UF-E2E-05 UF-E2E-16 fixtureの失敗理由と内部宛先を分ける', async ({ page, request }) => {
+      const value = await task(request);
+      await page.goto(`/tasks/${value.id}`);
+      const panel = page.locator('[data-reference-panel]');
+      await panel.getByRole('tab', { name: 'URL', exact: true }).click();
+      const cases = [
+        ['http://example.com/forbidden', 'サイトに取得を断られました'], ['http://example.com/gone', 'ページが見つかりませんでした'],
+        ['http://example.com/failed', 'サイト側でエラーが起きています'], ['http://example.com/pdf', 'HTML またはテキスト'],
+        ['http://example.com/large', 'ページが大きすぎて'], ['http://missing.example.com/', 'サイトが見つかりませんでした'],
+        ['http://127.0.0.1/', '安全上の理由'], ['http://private.example.com/', '安全上の理由'], ['http://example.com/private', '安全上の理由'],
+        ['http://example.com/rate', 'サイトに取得を断られました'],
+      ];
+      for (const [url, message] of cases) {
+        await panel.getByLabel('関連するURL').fill(url);
+        await panel.getByRole('button', { name: 'URLを追加', exact: true }).click();
+        const row = panel.locator('[data-reference-kind="URL"]').filter({ has: page.getByText(url, { exact: true }) });
+        await expect(row.locator('[data-reference-failure]')).toContainText(message);
+        await expect(row).toContainText('取得失敗');
+        if (message === '安全上の理由') await expect(row.locator('a[href]')).toHaveCount(0);
+      }
+      const privateRow = panel.locator('[data-reference-kind="URL"]').filter({ has: page.getByText('http://private.example.com/', { exact: true }) });
+      expect(await privateRow.innerText()).not.toMatch(/\b(?:\d{1,3}\.){3}\d{1,3}\b/);
+      expect((await panel.innerText()).replace('http://127.0.0.1/', '')).not.toMatch(/\b(?:\d{1,3}\.){3}\d{1,3}\b/);
+      await capture(page, `${viewport.name}-urlfix-fixture-failures.png`);
+    });
+
+    test('UF-E2E-06 UF-E2E-07 合成の一部取得と取得中の表示を区別する', async ({ page, request }) => {
+      const value = await task(request);
+      const variants = [
+        { truncated: true, contentHint: null, marker: 'TRUNCATED', message: '一部のみ取り込みました（先頭の5万字まで）。続きが必要なら、必要な部分をメモに貼り付けてください。' },
+        { truncated: true, contentHint: null, marker: 'PARTIAL', message: '一部のみ取得しました。解析の上限などで本文が欠けています。必要な部分はメモに貼り付けてください。' },
+        { truncated: false, contentHint: 'SHORT_BODY', marker: 'SHORT_BODY', message: '一部のみ取得の可能性があります（本文が短いページです）。必要な部分はメモに貼り付けてください。' },
+        { truncated: false, contentHint: 'PAYWALL_HINT', marker: 'PAYWALL_HINT', message: '一部のみ取得の可能性があります（ログインや有料の続きがあるページかもしれません）。必要な部分はメモに貼り付けてください。' },
+      ] satisfies { truncated: boolean; contentHint: UrlReference['contentHint']; marker: string; message: string }[];
+      const items = variants.map(({ truncated, contentHint }, index) => syntheticUrl(value.id, { id: `partial-${index}`, fetchStatus: 'SUCCEEDED', fetchErrorCode: null, body: index === 0 ? '文'.repeat(50000) : '取り込んだ本文', truncated, contentHint }));
+      items.push(syntheticUrl(value.id, { id: 'fetching-partial', fetchStatus: 'FETCHING', fetchErrorCode: 'HTTP_ERROR', fetchFailureReason: 'HTTP_REFUSED', body: '以前の本文', truncated: true, contentHint: 'PAYWALL_HINT' }));
+      await page.route(`**/api/tasks/${value.id}/references`, route => route.fulfill({ json: { references: items } }));
+      await page.goto(`/tasks/${value.id}`);
+      const panel = page.locator('[data-reference-panel]');
+      await panel.getByRole('tab', { name: 'URL', exact: true }).click();
+      const rows = panel.locator('[data-reference-kind="URL"]');
+      for (const [index, variant] of variants.entries()) {
+        await expect(rows.nth(index).locator('[data-reference-completeness]')).toHaveText(variant.message);
+        await expect(rows.nth(index).locator('[data-reference-completeness]')).toHaveAttribute('data-reference-completeness', variant.marker);
+        await expect(rows.nth(index).locator('[data-reference-completeness]')).not.toHaveAttribute('role');
+      }
+      await expect(rows.nth(variants.length).locator('[data-reference-failure], [data-reference-completeness]')).toHaveCount(0);
+      await capture(page, `${viewport.name}-urlfix-partial-messages.png`);
+    });
+
+    test('UF-E2E-08 UF-E2E-09 fixtureの一部取得・タイトル・本文を表示する', async ({ page, request }) => {
+      const value = await task(request);
+      await page.goto(`/tasks/${value.id}`);
+      const panel = page.locator('[data-reference-panel]');
+      await panel.getByRole('tab', { name: 'URL', exact: true }).click();
+      for (const [path, expected] of [['long', '一部のみ取り込みました（先頭の5万字まで）。続きが必要なら、必要な部分をメモに貼り付けてください。'], ['note-short', '一部のみ取得の可能性']]) {
+        const url = `http://example.com/${path}`;
+        await panel.getByLabel('関連するURL').fill(url);
+        await panel.getByRole('button', { name: 'URLを追加', exact: true }).click();
+        const row = panel.locator('[data-reference-kind="URL"]').filter({ has: page.getByRole('link', { name: url, exact: true }) });
+        await expect(row.locator('[data-reference-completeness]')).toContainText(expected);
+      }
+      for (const [path, title, body] of [['svg-title', '記事の正しいタイトル', '記事の正しい冒頭です。'], ['menu-main', 'メニューを除く記事', '本文の正しい冒頭です。']]) {
+        const url = `http://example.com/${path}`;
+        await panel.getByLabel('関連するURL').fill(url);
+        await panel.getByRole('button', { name: 'URLを追加', exact: true }).click();
+        const row = panel.locator('[data-reference-kind="URL"]').filter({ has: page.getByRole('link', { name: url, exact: true }) });
+        await expect(row.locator('h3')).toHaveText(title);
+        await row.getByText('本文を確認', { exact: true }).click();
+        await expect(row.locator('.reference-body')).toHaveText(body);
+      }
+      await capture(page, `${viewport.name}-urlfix-fixture-content.png`);
+    });
+
+    for (const fetchStatus of ['FAILED', 'FETCHING'] as const) {
+      for (const operation of ['追加', '再取得']) {
+        test(`S22 ${operation}の応答が${fetchStatus}でコードなしなら開始通知を残さない`, async ({ page, request }) => {
+          const value = await task(request);
+          const endpoint = `/api/tasks/${value.id}/references`;
+          const saved = syntheticUrl(value.id, { fetchStatus, fetchErrorCode: null });
+          let items = operation === '再取得' ? [syntheticUrl(value.id, { fetchStatus: 'FAILED', fetchErrorCode: 'TIMEOUT' })] : [];
+          await page.route(`**${endpoint}`, route => {
+            if (route.request().method() === 'GET') return route.fulfill({ json: { references: items } });
+            items = [saved];
+            return route.fulfill({ status: 201, json: { reference: saved } });
+          });
+          await page.route(`**${endpoint}/*/refetch`, route => {
+            items = [saved];
+            return route.fulfill({ json: { reference: saved } });
+          });
+          await page.goto(`/tasks/${value.id}`);
+          const panel = page.locator('[data-reference-panel]');
+          await panel.getByRole('tab', { name: 'URL', exact: true }).click();
+          if (operation === '追加') {
+            await panel.getByLabel('関連するURL').fill('https://example.com/article');
+            await panel.getByRole('button', { name: 'URLを追加', exact: true }).click();
+          } else await panel.locator('button[data-reference-action="refetch"]').click();
+          await expect(panel.locator('[data-reference-message]')).toHaveAttribute('role', 'status');
+          await expect(panel.locator('[data-reference-message]')).toHaveText('結果を確認しています。一覧を確認してください。');
+          await panel.getByRole('tab', { name: 'メモ', exact: true }).click();
+          await expect(panel.locator('[data-reference-message]')).toHaveText('');
+        });
+      }
+    }
+
+    test('S22 取得中にタブを変えた場合も遅い応答の通知を表示しない', async ({ page, request }) => {
+      const value = await task(request);
+      const endpoint = `/api/tasks/${value.id}/references`;
+      const gate: { release?: () => void } = {};
+      const saved = syntheticUrl(value.id, { fetchStatus: 'SUCCEEDED', fetchErrorCode: null, body: '本文' });
+      let items: UrlReference[] = [];
+      await page.route(`**${endpoint}`, async route => {
+        if (route.request().method() === 'GET') return route.fulfill({ json: { references: items } });
+        await new Promise<void>(resolve => { gate.release = resolve; });
+        items = [saved];
+        return route.fulfill({ status: 201, json: { reference: saved } });
+      });
+      await page.goto(`/tasks/${value.id}`);
+      const panel = page.locator('[data-reference-panel]');
+      await panel.getByRole('tab', { name: 'URL', exact: true }).click();
+      await panel.getByLabel('関連するURL').fill('https://example.com/article');
+      await panel.getByRole('button', { name: 'URLを追加', exact: true }).click();
+      await expect(panel.locator('[data-reference-message]')).toHaveText('ページを取得しています。最大20秒ほどかかることがあります。');
+      await expect.poll(() => !!gate.release).toBe(true);
+      await panel.getByRole('tab', { name: 'メモ', exact: true }).click();
+      await expect(panel.locator('[data-reference-message]')).toHaveText('');
+      gate.release?.();
+      await expect(panel.getByLabel('メモの本文')).toBeEnabled();
+      await expect(panel.locator('[data-reference-message]')).toHaveText('');
+      await panel.getByRole('tab', { name: 'URL', exact: true }).click();
+      await expect(panel.locator('[data-reference-kind="URL"]')).toHaveCount(1);
+      await expect(panel.locator('[data-reference-message]')).toHaveText('');
+    });
+
+    test('UF-E2E-11 UF-E2E-12 UF-E2E-13 追加・再取得の開始と結果を通知する', async ({ page, request }) => {
+      const value = await task(request);
+      let items: UrlReference[] = [];
+      const gate: { release?: () => void } = {};
+      function releaseResponse() { gate.release?.(); gate.release = undefined; }
+      let result: 'FAILED' | 'SUCCEEDED' | 'PARTIAL' = 'FAILED';
+      const endpoint = `/api/tasks/${value.id}/references`;
+      const complete = async () => {
+        await new Promise<void>(resolve => { gate.release = resolve; });
+        const item = syntheticUrl(value.id, { id: 'notification-url', fetchStatus: result === 'FAILED' ? 'FAILED' : 'SUCCEEDED',
+          fetchErrorCode: result === 'FAILED' ? 'HTTP_ERROR' : null, fetchFailureReason: result === 'FAILED' ? 'HTTP_REFUSED' : null,
+          body: result === 'FAILED' ? '' : result === 'PARTIAL' ? '文'.repeat(50000) : '取得した本文', truncated: result === 'PARTIAL' });
+        items = [item];
+        return item;
+      };
+      await page.route(`**${endpoint}`, async route => {
+        if (route.request().method() === 'GET') return route.fulfill({ json: { references: items } });
+        return route.fulfill({ status: 201, json: { reference: await complete() } });
+      });
+      await page.route(`**${endpoint}/*/refetch`, async route => route.fulfill({ json: { reference: await complete() } }));
+      await page.goto(`/tasks/${value.id}`);
+      const panel = page.locator('[data-reference-panel]');
+      await panel.getByRole('tab', { name: 'URL', exact: true }).click();
+      await panel.getByLabel('関連するURL').fill('https://example.com/article');
+      await panel.getByRole('button', { name: 'URLを追加', exact: true }).click();
+      const start = panel.getByRole('status').filter({ hasText: 'ページを取得しています。最大20秒ほどかかることがあります。' });
+      await expect(start).toBeVisible();
+      await expect(panel.getByRole('button', { name: '取得中…', exact: true })).toBeDisabled();
+      await expect.poll(() => !!gate.release).toBe(true);
+      releaseResponse();
+      await expect(panel.getByRole('status').filter({ hasText: 'URLは保存しました。' })).toHaveText('URLは保存しました。サイトに取得を断られました。時間をおいて再取得するか、内容をメモに貼り付けてください。');
+      await panel.locator('button[data-reference-action="refetch"]').click();
+      await expect(start).toBeVisible();
+      await expect.poll(() => !!gate.release).toBe(true);
+      releaseResponse();
+      await expect(panel.getByRole('status').filter({ hasText: '再取得できませんでした。' })).toHaveText('再取得できませんでした。サイトに取得を断られました。時間をおいて再取得するか、内容をメモに貼り付けてください。');
+      await expect(panel.locator('[data-reference-failure]')).toContainText('サイトに取得を断られました');
+      result = 'SUCCEEDED';
+      await panel.locator('button[data-reference-action="refetch"]').click();
+      await expect(start).toBeVisible();
+      await expect(panel.locator('button[data-reference-action="refetch"]')).toBeDisabled();
+      await expect.poll(() => !!gate.release).toBe(true);
+      releaseResponse();
+      await expect(panel.getByRole('status').filter({ hasText: /^ページを取り込みました。$/ })).toBeVisible();
+      await expect(panel.locator('[data-reference-failure]')).toHaveCount(0);
+      result = 'PARTIAL';
+      await panel.locator('button[data-reference-action="refetch"]').click();
+      await expect(start).toBeVisible();
+      await expect.poll(() => !!gate.release).toBe(true);
+      releaseResponse();
+      await expect(panel.getByRole('status').filter({ hasText: 'ページを取り込みました。一部のみ取り込みました（先頭の5万字まで）。続きが必要なら、必要な部分をメモに貼り付けてください。' })).toBeVisible();
+      await capture(page, `${viewport.name}-urlfix-result-notification.png`);
+      for (const name of ['メモ', 'ファイル', 'URL']) {
+        await panel.getByRole('tab', { name, exact: true }).click();
+        await expect(panel.locator('[data-reference-message]')).toHaveText('');
+      }
+    });
+  });
+}
 for (const kind of ['NOTE', 'URL'] as const) {
   for (const changeAndRestore of [false, true]) {
     test(`${kind}は保存応答喪失後${changeAndRestore ? '内容を変更して戻すと新操作になる' : '同内容の再試行で一件に収束する'}`, async ({ page, request }) => {

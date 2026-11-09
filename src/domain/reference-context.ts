@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import type { Reference } from './references';
+import { getReferenceCompleteness, type Reference } from './references';
 
 function clean(text: string): string {
   return text.replace(/[\p{Cc}\p{Cf}\p{Cs}]/gu, value => value === '\n' || value === '\t' ? value : '').replace(/</g, '＜').replace(/>/g, '＞');
@@ -26,9 +26,13 @@ export function buildReferenceBlock(items: readonly Reference[], options: { nonc
   const includedIds: string[] = [];
   let length = start.length + end.length + 100;
   for (const item of sorted) {
+    const completeness = item.kind === 'URL' && item.fetchStatus === 'SUCCEEDED' ? getReferenceCompleteness(item) : null;
+    const annotation = completeness === 'TRUNCATED'
+      ? '注記: 取得できたのはページの先頭部分のみです。続きの内容は推測しないでください。\n'
+      : completeness ? '注記: 本文の一部しか取得できていない可能性があります。書かれていない内容は推測しないでください。\n' : '';
     const block = item.kind === 'NOTE'
       ? `[資料${includedIds.length + 1}] 種類: メモ\n${quote(`題: ${item.title}`, 230)}\n${quote(item.body, 4000)}`
-      : `[資料${includedIds.length + 1}] 種類: Webページ(外部・未検証)\n${quote(`URL: ${item.url}`, 2080)}\n${item.fetchStatus === 'SUCCEEDED' ? `${quote(`題: ${item.title} / 取得日時: ${item.fetchedAt ?? ''}`, 380)}\n${quote(item.body, 6000)}` : '｜ 本文未取得'}`;
+      : `[資料${includedIds.length + 1}] 種類: Webページ(外部・未検証)\n${quote(`URL: ${item.url}`, 2080)}\n${annotation}${item.fetchStatus === 'SUCCEEDED' ? `${quote(`題: ${item.title} / 取得日時: ${item.fetchedAt ?? ''}`, 380)}\n${quote(item.body, 6000)}` : '｜ 本文未取得'}`;
     if (includedIds.length >= 20 || length + block.length > 20_000) continue;
     blocks.push(block); includedIds.push(item.id); length += block.length + 1;
   }
