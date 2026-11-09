@@ -13,11 +13,13 @@ import styles from './breakdown.module.css';
 import { useServices } from '../../use-services';
 import { DraftFlowPanel } from './draft-flow-panel';
 
-export function BreakdownEditor({ taskId, artifactVersion, disabled }: { taskId: string; artifactVersion: string | null; disabled: boolean }) {
+export function BreakdownEditor({ taskId, artifactVersion, disabled, onLatestVersion }: { taskId: string; artifactVersion: string | null; disabled: boolean; onLatestVersion?: (id: string | null) => void }) {
   const { services, error: serviceError } = useServices();
   const workerLabel = services?.find((service) => service.name === 'AI')?.label;
   const [flowVersion, setFlowVersion] = useState<string | null>(null);
   const [snapshot, setSnapshot] = useState<BreakdownSnapshot | null>(null);
+  const latestVersionId = snapshot?.versions.at(-1)?.id ?? null;
+  useEffect(() => { onLatestVersion?.(latestVersionId); }, [latestVersionId, onLatestVersion]);
   const [steps, setSteps] = useState<string[]>([]);
   const [baseVersion, setBaseVersion] = useState<string | null>(null);
   const [comment, setComment] = useState('');
@@ -273,7 +275,7 @@ export function BreakdownEditor({ taskId, artifactVersion, disabled }: { taskId:
         {history ? <div aria-label="過去の分解"><p>{breakdownVersionLabel(history)}</p>{history.steps.length ? <ol>{history.steps.map((step, i) => <li key={i}>{step}</li>)}</ol> : <p>項目はありません。</p>}{history.comment ? <p>全体コメント {history.comment}</p> : null}<Button label="この版を復元" isDisabled={locked} onClick={() => void submit('restore')} /></div> : null}
       </details>
     </>}
-    <DraftFlowPanel taskId={taskId} dirty={dirty} disabled={disabled} savedVersionId={snapshot?.versions.at(-1)?.id ?? null} onLatestVersion={id => setFlowVersion(current => current === id ? current : id)} />
+    <DraftFlowPanel taskId={taskId} dirty={dirty} disabled={disabled} savedVersionId={snapshot?.versions.at(-1)?.id ?? null} onLatestVersion={id => { if (trackedJob || id === latestVersionId) return; setFlowVersion(current => current === id ? current : id); }} />
     <p role="status">{notice}</p>
     {error || watchError ? <p className={styles.warning} role="alert" data-app-error="true">{error}{watchError}</p> : null}
     <Button label={loading ? '読み込み中…' : '最新の版を読み込む'} isDisabled={loading || busy} onClick={() => void reload()} />

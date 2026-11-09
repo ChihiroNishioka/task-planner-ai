@@ -35,6 +35,12 @@ export class DraftFlowStore {
     CREATE UNIQUE INDEX IF NOT EXISTS draft_jobs_one_active ON draft_jobs(task_id) WHERE status IN ('QUEUED','RUNNING');`);
   }
 
+  artifactSource(taskId: string, versionId: string): 'CREATE' | 'REVISE' | null {
+    const row = z.object({ source: z.enum(['CREATE', 'REVISE']) }).nullable().parse(
+      this.db.prepare('SELECT source FROM draft_version_links WHERE task_id=? AND artifact_version_id=?').get(taskId, versionId) ?? null);
+    return row?.source ?? null;
+  }
+
   snapshot(taskId: string): DraftFlowSnapshot {
     const state = this.taskState(taskId);
     const versions = this.versions(taskId);

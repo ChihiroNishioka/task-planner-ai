@@ -15,6 +15,14 @@ describe('初版と改訂のモード違いの案内', () => {
   it('N3 worker状態が不明でも改訂側のモードだけ示す', () => {
     expect(revisionModeNotice('mock', null)).toContain('修正版はモック');
   });
+  it('N5 分解から作るv2以降も再作成を案内し改訂は修正指示の再送を案内する', () => {
+    expect(fallbackGuidance(2, 'CREATE')).toContain('この分解でドラフトを作る');
+    expect(fallbackGuidance(3, 'CREATE')).not.toContain('修正指示をもう一度送');
+    expect(fallbackGuidance(1, 'REVISE')).toContain('修正指示をもう一度送');
+    expect(fallbackGuidance(2, 'REVISE')).toContain('修正指示をもう一度送');
+    expect(fallbackGuidance(1, null)).toBe(fallbackGuidance(1));
+    expect(fallbackGuidance(2, null)).toBe(fallbackGuidance(2));
+  });
   it('N4 fallbackの案内は初版再生成と修正指示の再送を区別する', () => {
     expect(fallbackGuidance(1)).toContain('この分解でドラフトを作る');
     expect(fallbackGuidance(2)).toContain('修正指示をもう一度送');

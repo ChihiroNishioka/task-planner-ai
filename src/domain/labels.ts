@@ -48,9 +48,9 @@ export function revisionModeNotice(webMode: 'cli' | 'mock', workerMode: 'cli' | 
   return `初版はワーカーの設定（${first}）、${revision}`;
 }
 
-/** 実AIが使えずモックになった版への次の操作の案内。初版の再生成と、修正指示の再送を区別する。 */
-export function fallbackGuidance(version: number): string {
-  return version <= 1
+/** 実AIが使えずモックになった版への次の操作の案内。作成経路を優先し、記録のない旧版だけ版番号で判断する。 */
+export function fallbackGuidance(version: number, source?: 'CREATE' | 'REVISE' | null): string {
+  return source === 'CREATE' || (source == null && version <= 1)
     ? 'CLIのログイン状態と設定を確認して「この分解でドラフトを作る」を押してください。'
     : 'この版には修正指示がAIで反映されていません。CLIのログイン状態と設定を確認して、ドラフトレビュー画面から修正指示をもう一度送ってください。';
 }

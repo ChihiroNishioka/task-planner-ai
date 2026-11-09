@@ -14,6 +14,7 @@ import { MockAiAdapter } from '../src/adapters/mock-ai';
 import { ReferenceStore } from '../src/adapters/reference-store';
 import { CliAiAdapter } from '../src/adapters/cli-ai';
 import { withReferences } from '../src/adapters/with-references';
+import { GET as artifacts } from '../src/app/api/tasks/[id]/artifacts/route';
 import { POST as feedback } from '../src/app/api/tasks/[id]/feedback/route';
 import type { PreparationAdapter } from '../src/adapters/mock-ai';
 import { createSessionToken } from '../src/domain/session';
@@ -160,4 +161,18 @@ it('DF-A04 分解未登録・不正・準備中・再生成中・完了・中止
     tasks.updateStatus(task.id, status);
     await check(task.id, command, 409, 'TASK_NOT_RUNNABLE', '完了・中止したタスクではドラフトを作れません。');
   }
+});
+
+it('成果物APIは版ごとの作成経路を返し記録のない旧版はnullにする', async () => {
+  const { task, command } = fixture();
+  await request(task.id, command); await drafts.runNextDraft(tasks, new MockAiAdapter());
+  expect((await revise(task.id)).status).toBe(201);
+  await request(task.id, { ...command, requestKey: randomUUID() });
+  await drafts.runNextDraft(tasks, new MockAiAdapter());
+  const readArtifacts = async () => (await (await artifacts(new Request('http://localhost'), { params: Promise.resolve({ id: task.id }) })).json()).artifacts;
+  expect(await readArtifacts()).toMatchObject([{ version: 1, source: 'CREATE' }, { version: 2, source: 'REVISE' }, { version: 3, source: 'CREATE' }]);
+  db.prepare('DELETE FROM draft_version_links WHERE task_id=?').run(task.id);
+  const before = rows();
+  expect(await readArtifacts()).toMatchObject([{ source: null }, { source: null }, { source: null }]);
+  expect(rows()).toEqual(before);
 });

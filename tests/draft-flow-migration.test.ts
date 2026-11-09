@@ -17,15 +17,18 @@ it.each(['none', 'before', 'after'])('DF-M01/02/03/05 completed_at %sでも既�
   let flow: DraftFlowStore | undefined;
   try {
     const task = tasks.create({ title: '移行前' }); preparations.enqueue(task); await preparations.runNext(tasks, new MockAiAdapter()); breakdown.syncArtifacts(task.id, preparations);
-    if (column === 'before') db.exec('ALTER TABLE tasks ADD COLUMN completed_at TEXT');
+    // PR #9 取り込み後は TaskStore が completed_at を作る。before 以外は PR #9 前の DB を再現するため列を外す。
+    if (column !== 'before') db.exec('ALTER TABLE tasks DROP COLUMN completed_at');
     const tables = ['tasks', 'preparation_jobs', 'work_plans', 'artifacts', 'artifact_versions', 'feedback', 'breakdown_versions', 'breakdown_requests', 'breakdown_jobs'];
     const before = tables.map(name => db.prepare(`SELECT * FROM ${name} ORDER BY rowid`).all());
     flow = new DraftFlowStore(path, join(directory, 'artifacts'));
     expect(tables.map(name => db.prepare(`SELECT * FROM ${name} ORDER BY rowid`).all())).toEqual(before);
     expect(flow.snapshot(task.id).draft?.version).toBe(1);
     flow.close(); flow = undefined;
-    if (column === 'after') db.exec('ALTER TABLE tasks ADD COLUMN completed_at TEXT');
+    if (column === 'after') new TaskStore(path).close(); // PR #9 の移行（completed_at の追加）を後から実行する
     flow = new DraftFlowStore(path, join(directory, 'artifacts')); expect(flow.snapshot(task.id).draft?.tracking).toBe('INFERRED');
+    const columns = z.array(z.object({ name: z.string() })).parse(db.prepare('PRAGMA table_info(tasks)').all()).map(row => row.name);
+    expect(columns.includes('completed_at')).toBe(column !== 'none');
   } finally { flow?.close(); db.close(); breakdown.close(); preparations.close(); tasks.close(); rmSync(directory, { recursive: true, force: true }); }
 });
 it('DF-M04 起動順と繰り返しでsqlite_masterが一致する', () => {

@@ -7,8 +7,8 @@ import { breakdownSnapshotSchema } from '../src/domain/breakdown';
 import { requiredDirectory } from './helpers/required-e2e-directory';
 import { buildWorkerEnv, unsafeWebAiEnv } from './helpers/safe-ai-env';
 
-const data = requiredDirectory('E2E_DATA_DIR', '/workspace/dev/tp-draft-data');
-const shots = requiredDirectory('SHOT_DIR', '/workspace/dev/tp-draft-runs');
+const data = requiredDirectory('E2E_DATA_DIR', process.env.E2E_DATA_ROOT ?? '/workspace/dev/tp-draft-data');
+const shots = requiredDirectory('SHOT_DIR', process.env.E2E_SHOT_ROOT ?? '/workspace/dev/tp-draft-runs');
 const unsafeReason = unsafeWebAiEnv(process.env, process.cwd());
 if (unsafeReason) throw new Error(unsafeReason);
 const viewports = [{ name: 'iphone-390x844', width: 390, height: 844 }, { name: 'pc-1280x800', width: 1280, height: 800 }];
@@ -64,6 +64,8 @@ for (const viewport of viewports) {
       worker();
       await expect(editor(page).getByLabel('項目 1', { exact: true })).toBeVisible();
       await expect(page.getByRole('region', { name: 'AIの準備結果' })).toHaveCount(0);
+      await expect(page.getByText('分解ができました。内容を確認して「この分解でドラフトを作る」を押してください。', { exact: true })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'AIで分解を作り直す', exact: true })).toBeVisible();
       expect((await snapshot(request, id)).draft).toBeNull();
       await capture(page, 'draft-breakdown-only', viewport);
     });

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { preparationStore, reviewStore, taskStore } from '../../../../../adapters/runtime';
+import { draftFlowStore, preparationStore, reviewStore, taskStore } from '../../../../../adapters/runtime';
 import { modeLabel } from '../../../../../domain/preparation';
 
 export function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
@@ -8,7 +8,7 @@ export function GET(_request: Request, context: { params: Promise<{ id: string }
     const artifacts = preparationStore.listArtifacts(id).map((artifact) => ({
       id: artifact.id, taskId: artifact.taskId, version: artifact.version, mode: artifact.mode,
       fallbackReason: artifact.fallbackReason, modeLabel: modeLabel(artifact.mode, artifact.fallbackReason),
-      versionId: artifact.versionId, parentVersionId: artifact.parentVersionId,
+      versionId: artifact.versionId, source: draftFlowStore.artifactSource(id, artifact.versionId), parentVersionId: artifact.parentVersionId,
       saveStatus: artifact.saveStatus, createdAt: artifact.createdAt, plan: artifact.plan,
       content: artifact.content, changeSummary: artifact.changeSummary,
       rating: reviewStore.rating(artifact.versionId), approval: reviewStore.approval(artifact.versionId),

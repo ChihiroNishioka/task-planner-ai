@@ -152,3 +152,14 @@ it.each(['delete', 'complete', 'rename', 'concurrent'])('DF-U30 改訂待機中�
   expect(preparations.listArtifacts(task.id)).toHaveLength(action === 'concurrent' ? 2 : 1);
   expect(preparations.feedbackHistory(task.id)).toHaveLength(action === 'concurrent' ? 1 : 0);
 });
+it('DF-U31 完了中は作れず、完了から戻すと completed_at が消えて作れる（PR #9 の changeStatus）', async () => {
+  const { task, version } = saved();
+  const done = tasks.changeStatus(task.id, 'COMPLETED');
+  expect(done?.task.completedAt).toBeTruthy();
+  expect(flow.snapshot(task.id)).toMatchObject({ canCreate: false, blockReason: 'TASK_NOT_RUNNABLE' });
+  const reopened = tasks.changeStatus(task.id, 'OPEN');
+  expect(reopened?.task.completedAt).toBeNull();
+  expect(flow.snapshot(task.id)).toMatchObject({ canCreate: true, blockReason: null });
+  flow.enqueue(task.id, version.id, 'reopened');
+  expect(await flow.runNextDraft(tasks, mock())).toMatchObject({ status: 'SUCCEEDED' });
+});

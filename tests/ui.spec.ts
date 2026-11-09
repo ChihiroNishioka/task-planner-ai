@@ -72,7 +72,7 @@ for (const viewport of viewports) {
       const preparation = await request.post(`/api/tasks/${task.id}/prepare`, { headers: { 'idempotency-key': `ai-${viewport.name}` } });
       expect(preparation.status()).toBe(202);
       await page.goto(`/tasks/${task.id}`);
-      await expect(page.locator('.ai-loading')).toContainText('AIが作成中');
+      await expect(page.locator('.ai-loading')).toContainText('AIが分解を作成中');
       await expectNoHorizontalOverflow(page, viewport.width);
       await capture(page, `${viewport.name}-ai-loading.png`);
       runWorker({ AI_MODE: 'cli', AI_CLI: 'claude', AI_CLI_PATH: join(process.cwd(), 'tests', 'fixtures', 'fake-ai-cli.mjs'), AI_TIMEOUT_MS: '10000' });
@@ -190,7 +190,7 @@ for (const viewport of viewports) {
       await capture(page, `${viewport.name}-revise-fallback.png`);
       await page.goto(`/tasks/${task.id}`);
       await expect(page.locator('.fallback-note')).toContainText('修正指示をもう一度送');
-      await expect(page.locator('.fallback-note')).not.toContainText('「AIでもう一度作る」を押して');
+      await expect(page.locator('.fallback-note')).not.toContainText('「この分解でドラフトを作る」を押して');
     });
 
     test('services API failure shows a Japanese error with retry on the list', async ({ page }) => {
