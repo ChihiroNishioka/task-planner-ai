@@ -5,7 +5,7 @@ import { createHash, createHmac } from 'node:crypto';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { ReferenceStore } from '../src/adapters/reference-store';
 import { TaskStore } from '../src/adapters/task-store';
-import type { FetchResult } from '../src/domain/references';
+import type { FetchResult, FetchFailureReason, FetchErrorCode } from '../src/domain/references';
 import { createReferenceApi } from '../src/adapters/reference-api';
 
 let dir: string; let store: ReferenceStore; let tasks: TaskStore; let id: string;
@@ -123,4 +123,17 @@ it('取得中にタスクが論理削除された場合は本文を確定しな�
   finish({ ok: true, title: '取得', body: '削除後に確定しない本文', finalUrl: 'https://example.com/', contentType: 'text/plain', truncated: false });
   expect((await pending).status).toBe(404);
   expect(store.list(id)[0]?.body).toBe('');
+});
+
+it.each<[FetchErrorCode,FetchFailureReason,number|undefined]>([
+ ['DNS_FAILED','DNS_NOT_FOUND',undefined],['DNS_FAILED','DNS_UNAVAILABLE',undefined],
+ ['BLOCKED_URL','BLOCKED_ADDRESS',undefined],['BLOCKED_URL','BLOCKED_URL_FORM',undefined],
+ ['HTTP_ERROR','HTTP_REFUSED',403],['HTTP_ERROR','HTTP_NOT_FOUND',404],['HTTP_ERROR','HTTP_SERVER',503],['HTTP_ERROR','HTTP_OTHER',418],
+])('UF-ERR-08/UF-SSRF-20 APIは %s %s の理由のみ公開する',async(code,reason,httpStatus)=>{
+ const routes=api(async()=>({ok:false,code,reason,httpStatus}));
+ const response=await routes.handle(request('/','POST',{kind:'URL',url:'https://example.com/'}),id);
+ expect(response.status).toBe(201); const data=await response.json();
+ expect(data.reference).toMatchObject({fetchErrorCode:code,fetchFailureReason:reason});
+ expect(data.reference).not.toHaveProperty('fetchHttpStatus'); expect(data.reference).not.toHaveProperty('httpStatus');
+ expect(JSON.stringify(data)).not.toMatch(/10\.0\.0\.1|198\.18\.0\.1|dns\.google/);
 });

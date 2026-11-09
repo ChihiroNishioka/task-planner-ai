@@ -21,7 +21,7 @@ function message(child: ChildProcess, expected: string) {
   });
 }
 
-it('MIG-03 通常Shell専用。別プロセスの初回初期化が同じDB書込ロック下で競合する', async () => {
+it('UF-COMP-02/MIG-03 通常Shell専用。別プロセスの初回初期化が同じDB書込ロック下で競合する', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'reference-migration-race-'));
   const path = join(directory, 'db.sqlite');
   const tasks = new TaskStore(path);
@@ -47,6 +47,7 @@ it('MIG-03 通常Shell専用。別プロセスの初回初期化が同じDB書�
     expect(db.prepare("SELECT name FROM sqlite_master WHERE name='task_references'").get()).toBeUndefined();
     db.exec('COMMIT'); locked = false;
     expect(await Promise.all(exits)).toEqual([[0, null], [0, null]]);
+    expect(db.prepare('PRAGMA table_info(task_references)').all()).toEqual(expect.arrayContaining(['fetch_failure_reason','fetch_http_status','fetch_detail_revision','content_hint'].map(name=>expect.objectContaining({name}))));
     expect(db.prepare('SELECT title FROM tasks WHERE id=?').get(task.id)).toEqual({ title: task.title });
     const references = new ReferenceStore(path);
     try { expect(references.add(task.id, { kind: 'NOTE', body: '競合後に保存' }).body).toBe('競合後に保存'); }
