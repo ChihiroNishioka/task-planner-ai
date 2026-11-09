@@ -37,6 +37,6 @@ export function revisionModeNotice(webMode: 'cli' | 'mock', workerMode: 'cli' | 
 /** 実AIが使えずモックになった版への次の操作の案内。初版の再生成と、修正指示の再送を区別する。 */
 export function fallbackGuidance(version: number): string {
   return version <= 1
-    ? 'CLIのログイン状態と設定を確認して「AIでもう一度作る」を押してください。'
+    ? 'CLIのログイン状態と設定を確認して「この分解でドラフトを作る」を押してください。'
     : 'この版には修正指示がAIで反映されていません。CLIのログイン状態と設定を確認して、ドラフトレビュー画面から修正指示をもう一度送ってください。';
 }

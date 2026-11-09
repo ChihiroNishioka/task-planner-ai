@@ -46,3 +46,25 @@ Phase 5では修正指示を前版へ結び付け、改訂版を追加します�
 | `content_type`, `truncated` | 本文種別と保存時の切り詰め有無 |
 
 メモ編集には現在のrevisionが必要です。削除は資料行を物理削除し、後着の取得結果で復活させません。30秒を過ぎたFETCHINGは次回参照時にFAILED・INTERRUPTEDへ回復します。取得失敗は以前のタイトル・本文を保持しますが、AI利用はNOTEとSUCCEEDEDのURL本文だけです。タスクが存在しない場合はAPIと既存生成処理で拒否します。
+
+
+## 分解とドラフトの接続
+
+`DraftFlowStore` は既存DBに別接続し、`busy_timeout=5000` を設定します。既存表の列変更、既存行の補完・書き換えは行いません。次の表とインデックスを `IF NOT EXISTS` で追加します。
+
+| 表 | 主な項目 | 用途 |
+| --- | --- | --- |
+| `draft_version_links` | `artifact_version_id` 主キー、`task_id`、nullableな `breakdown_version_id`、`source`、`created_at` | ドラフト版が基準とした分解版。`source` は `CREATE` または `REVISE` |
+| `draft_jobs` | `id` 主キー、`task_id`、`status`、`error_code`、`breakdown_version_id`、`request_key`、`task_revision`、`created_at`、`updated_at` | 永続化したドラフト作成ジョブ |
+
+`draft_version_links_task` と `draft_queue` が検索を支えます。`UNIQUE(task_id, request_key)` が再送を同じジョブへ結び付けます。部分一意インデックス `draft_jobs_one_active` は、タスクごとの `QUEUED` または `RUNNING` を1件に制限します。`task_revision INTEGER NOT NULL` は受付時のタスクrevisionです。取得時と保存直前に照合し、完了後に再開した場合も古いジョブを復活させません。
+
+初回の準備ジョブは分解版だけを追加します。ドラフト作成は保存済み分解版を入力として、artifactとリンクを同じトランザクションで追加します。改訂では最新の分解を入力へ渡しますが、分解版を追加しません。改訂版の基準版は親から継承します。作成と改訂ではタスクのrevisionとai_statusを変更しません。
+
+読み取り時の追跡は `TRACKED`、`INFERRED`、`UNKNOWN` です。リンクがあれば記録された基準版を使います。旧版では `breakdown_versions.source_artifact` と一致する分解版があれば推定し、それ以外は不明とします。基準版が見つからない場合も不明です。基準版と最新分解の手順を順序込みで比較し、異なる場合に変更案内を出します。不明の場合は変更案内を出しません。この判定でDBには書き込みません。
+
+`BreakdownStore` も `draft_version_links` の同じDDLを持ち、リンクのあるartifactを `syncArtifacts` の対象から除外します。これにより、ドラフト閲覧で編集済み分解が古い手順へ戻ることを防ぎます。既存のリンクなしartifactの取り込みは従来どおりです。
+
+本番の差し替えは本作業の対象外です。実施時にはworker、webの順に停止し、DBと `-wal`、`-shm` を退避してから、web、workerの順に起動します。旧workerと新webの混在ではドラフトジョブは待機したままです。旧webには新しい作成ボタンがありません。
+
+切り戻しではコードだけを旧版に戻せません。`breakdown-store.ts` のリンク表・インデックスのDDLと、`syncArtifacts` のリンク付きartifact除外の1行を残した切り戻しコミットを使います。新表は削除しません。両プロセスを停止して切り替え、既存ドラフトの閲覧後も分解の最新版が変わらないことを確認します。退避DBへの復元は投入後の変更を失うため、最終手段です。

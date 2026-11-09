@@ -16,7 +16,7 @@ describe('初版と改訂のモード違いの案内', () => {
     expect(revisionModeNotice('mock', null)).toContain('修正版はモック');
   });
   it('N4 fallbackの案内は初版再生成と修正指示の再送を区別する', () => {
-    expect(fallbackGuidance(1)).toContain('AIでもう一度作る');
+    expect(fallbackGuidance(1)).toContain('この分解でドラフトを作る');
     expect(fallbackGuidance(2)).toContain('修正指示をもう一度送');
     expect(fallbackGuidance(2)).not.toContain('AIでもう一度作る');
   });

@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { DraftStaleNotice } from '../draft-flow-panel';
 import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { z } from 'zod';
 import { useServices } from '../../../use-services';
@@ -59,7 +60,10 @@ export default function Review({ params }: { params: Promise<{ id: string }> }) 
         method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ content: feedback }),
       });
       const result: unknown = await response.json();
-      if (!response.ok) throw new Error('修正版を作れませんでした。修正指示を確認してもう一度お試しください。');
+      if (!response.ok) {
+        const errorResult = z.object({ error: z.string() }).safeParse(result);
+        throw new Error(response.status === 409 && errorResult.success ? errorResult.data.error : '修正版を作れませんでした。修正指示を確認してもう一度お試しください。');
+      }
       const created = artifactSchema.parse(z.object({ artifact: z.unknown() }).parse(result).artifact);
       setFeedback('');
       await load(taskId);
@@ -89,7 +93,8 @@ export default function Review({ params }: { params: Promise<{ id: string }> }) 
 
   const current = data.artifacts.at(-1);
   return <main className="shell"><header className="topbar"><Link href={taskId ? `/tasks/${taskId}` : '/'} className="back-link">← タスク詳細</Link><span className="mock-label">モック</span></header><section className="detail-card"><p className="eyebrow">ドラフト比較</p><h1>成果物レビュー</h1>
-    {loading ? <p className="state" role="status">読み込み中…</p> : error && data.artifacts.length === 0 ? <div className="state error" role="alert">{error}</div> : !current ? <div className="state empty"><h2>ドラフトはありません</h2><p>タスク詳細からAI準備を依頼できます。</p></div> : <>
+    {taskId ? <DraftStaleNotice taskId={taskId} onCreated={() => load(taskId)} /> : null}
+    {loading ? <p className="state" role="status">読み込み中…</p> : error && data.artifacts.length === 0 ? <div className="state error" role="alert">{error}</div> : !current ? <div className="state empty"><h2>ドラフトはありません</h2><p>タスク詳細で分解を確認し、「この分解でドラフトを作る」を押してください。</p></div> : <>
       <p>保存状態 {saveStatusLabel('MOCK_SAVED')}（Drive連携はモック）</p>
       <div className="version-grid">{data.artifacts.map((artifact) => <VersionCard key={artifact.versionId} artifact={artifact} busy={busy} onAction={reviewVersion} />)}</div>
       <section className="plan-section"><h2>作業計画</h2><p>{current.plan.objective}</p><ol>{current.plan.steps.map((step) => <li key={step}>{step}</li>)}</ol><p>人の確認: {current.plan.humanCheckpoints.join('、')}</p></section>

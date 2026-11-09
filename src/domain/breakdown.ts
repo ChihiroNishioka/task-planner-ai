@@ -66,5 +66,5 @@ export type BreakdownGeneration = z.infer<typeof breakdownGenerationSchema>;
 
 export function breakdownVersionLabel(version: BreakdownVersion): string {
   const kinds = { user: 'ユーザー編集', ai: '作り直し', restore: '復元', import: '成果物から取込' };
-  return `分解 v${version.number}・${kinds[version.kind]}${version.mode ? `・${modeLabel(version.mode, version.fallbackReason)}` : ''}`;
+  return `分解 v${version.number}・${version.kind === 'ai' && version.comment === '' ? '初回作成' : kinds[version.kind]}${version.mode ? `・${modeLabel(version.mode, version.fallbackReason)}` : ''}`;
 }

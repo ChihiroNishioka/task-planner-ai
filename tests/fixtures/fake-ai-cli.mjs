@@ -14,6 +14,12 @@ process.stdin.on('end', () => {
     return;
   }
   const title = /タイトル: (.*)/.exec(input)?.[1] ?? 'タスク';
+  if (input.includes('<breakdown_steps>')) {
+    const block = /<breakdown_steps>\n([\s\S]*?)\n<\/breakdown_steps>/.exec(input)?.[1] ?? '';
+    const steps = block.split('\n').filter(line => /^\d+\. /.test(line));
+    process.stdout.write(JSON.stringify({ draftMarkdown: `# ${title}\n\n${steps.map(step => `## ${step}\n\n（偽CLIの固定出力）要確認`).join('\n\n')}` }));
+    return;
+  }
   process.stdout.write(JSON.stringify({
     steps: ['目的と完了条件を1行で書く', '必要な資料を3つ洗い出す', '構成案を見出しだけで作る', '下書きを確認して不足を埋める'],
     draftMarkdown: `# ${title}\n\n## 目的\n\n（偽CLIの固定出力）要確認\n\n## 構成案\n\n1. 背景\n2. 提案\n3. 次の行動\n`,

@@ -11,10 +11,12 @@ import { breakdownConflictMessage, breakdownFailureReason, breakdownSnapshotSche
 import { modeLabel } from '../../../domain/preparation';
 import styles from './breakdown.module.css';
 import { useServices } from '../../use-services';
+import { DraftFlowPanel } from './draft-flow-panel';
 
 export function BreakdownEditor({ taskId, artifactVersion, disabled }: { taskId: string; artifactVersion: string | null; disabled: boolean }) {
   const { services, error: serviceError } = useServices();
   const workerLabel = services?.find((service) => service.name === 'AI')?.label;
+  const [flowVersion, setFlowVersion] = useState<string | null>(null);
   const [snapshot, setSnapshot] = useState<BreakdownSnapshot | null>(null);
   const [steps, setSteps] = useState<string[]>([]);
   const [baseVersion, setBaseVersion] = useState<string | null>(null);
@@ -73,7 +75,7 @@ export function BreakdownEditor({ taskId, artifactVersion, disabled }: { taskId:
     }).catch((cause: unknown) => { if (!cancelled) setError(cause instanceof Error ? cause.message : '分解を読み込めませんでした。再試行してください。'); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [read, hydrate, artifactVersion]);
+  }, [read, hydrate, artifactVersion, flowVersion]);
   useEffect(() => {
     if (!trackedJob) return;
     let cancelled = false;
@@ -239,7 +241,7 @@ export function BreakdownEditor({ taskId, artifactVersion, disabled }: { taskId:
       <div className={styles.actions}><Button id="breakdown-add" label="項目を追加" isDisabled={locked || steps.length >= 50} onClick={() => { focusTarget.current = `breakdown-step-${steps.length}`; edit([...steps, '']); }} /><Button label={busy ? '保存中…' : 'ユーザー編集版を保存'} variant="primary" isDisabled={locked || !dirty} onClick={() => void submit('save')} /></div>
       {pending ? <p className={styles.hint}>AIの作成中に保存すると、作成中のAIの結果は使われません。</p> : null}
       {deleted ? <Button label="削除を取り消す" isDisabled={locked} onClick={undoDelete} /> : null}
-      {current?.mode === 'mock_fallback' ? <p className={styles.warning} data-mode="mock_fallback">{modeLabel(current.mode, current.fallbackReason)}。実AIでは再生成せず、入力項目を保持しています。理由コード {current.fallbackReason}</p> : null}
+      {current?.mode === 'mock_fallback' ? <p className={styles.warning} data-mode="mock_fallback">{modeLabel(current.mode, current.fallbackReason)}。{current.kind === 'ai' && current.comment === '' ? '実AIを使えなかったため、固定のモック手順を表示しています。' : '実AIでは再生成せず、入力項目を保持しています。'}理由コード {current.fallbackReason}</p> : null}
       <div className={styles.comment}><label htmlFor="breakdown-comment">全体コメント</label><textarea ref={commentRef} id="breakdown-comment" rows={3} maxLength={20000} value={comment} disabled={locked} onChange={(event) => { setComment(event.target.value); markEdited(); }} placeholder="どのように手順を直したいですか" /><p className={styles.hint}>未保存の現在のリストとこのコメントをAIに渡します。</p><p className={styles.hint}>AIワーカー {workerLabel ?? (serviceError ? '状態を確認できません' : '確認中…')}</p><Button label="このコメントでAIに作り直してもらう" variant="primary" isDisabled={locked || pending || !comment.trim()} onClick={() => void submit('regenerate')} /></div>
       {pending ? <><p role="status">AIが分解を作成中… ワーカーの処理を待っています。</p><Button label="AIの作り直しを取り消す" isDisabled={locked} onClick={() => void submit('cancel')} /></> : null}
       {pending ? <p className={styles.hint}>取り消すと、作成中のAIの結果は保存されません。入力とコメントはそのまま残ります。</p> : null}
@@ -271,6 +273,7 @@ export function BreakdownEditor({ taskId, artifactVersion, disabled }: { taskId:
         {history ? <div aria-label="過去の分解"><p>{breakdownVersionLabel(history)}</p>{history.steps.length ? <ol>{history.steps.map((step, i) => <li key={i}>{step}</li>)}</ol> : <p>項目はありません。</p>}{history.comment ? <p>全体コメント {history.comment}</p> : null}<Button label="この版を復元" isDisabled={locked} onClick={() => void submit('restore')} /></div> : null}
       </details>
     </>}
+    <DraftFlowPanel taskId={taskId} dirty={dirty} disabled={disabled} savedVersionId={snapshot?.versions.at(-1)?.id ?? null} onLatestVersion={id => setFlowVersion(current => current === id ? current : id)} />
     <p role="status">{notice}</p>
     {error || watchError ? <p className={styles.warning} role="alert" data-app-error="true">{error}{watchError}</p> : null}
     <Button label={loading ? '読み込み中…' : '最新の版を読み込む'} isDisabled={loading || busy} onClick={() => void reload()} />

@@ -55,6 +55,7 @@ for (const viewport of viewports) {
       const preparation = await request.post(`/api/tasks/${task.id}/prepare`, { headers: { 'idempotency-key': `prepare-${viewport.name}` } });
       expect(preparation.status()).toBe(202);
       runWorker({});
+      await createDraftAfterPreparation(request, task.id, {});
       await request.post(`/api/tasks/${task.id}/feedback`, { data: { content: '結論を先に書いてください' } });
       await page.goto(`/tasks/${task.id}/review`);
       await expect(page.getByRole('heading', { name: '成果物レビュー' })).toBeVisible();
@@ -75,6 +76,10 @@ for (const viewport of viewports) {
       await expectNoHorizontalOverflow(page, viewport.width);
       await capture(page, `${viewport.name}-ai-loading.png`);
       runWorker({ AI_MODE: 'cli', AI_CLI: 'claude', AI_CLI_PATH: join(process.cwd(), 'tests', 'fixtures', 'fake-ai-cli.mjs'), AI_TIMEOUT_MS: '10000' });
+      await expect(page.getByRole('region', { name: 'AIの準備結果' })).toHaveCount(0);
+      await expect(page.getByRole('region', { name: '分解編集' }).locator('.ai-steps li')).toHaveCount(4);
+      await createDraftAfterPreparation(request, task.id, { AI_MODE: 'cli', AI_CLI: 'claude', AI_CLI_PATH: fakeCli, AI_TIMEOUT_MS: '10000' });
+      await page.reload();
       const result = page.getByRole('region', { name: 'AIの準備結果' });
       await expect(result.locator('.mode-badge')).toHaveText('AI生成', { timeout: 15_000 });
       await expect(page.getByRole('region', { name: '分解編集' }).locator('.ai-steps li')).toHaveCount(4);
@@ -89,6 +94,7 @@ for (const viewport of viewports) {
       const preparation = await request.post(`/api/tasks/${task.id}/prepare`, { headers: { 'idempotency-key': `fallback-${viewport.name}` } });
       expect(preparation.status()).toBe(202);
       runWorker({ AI_MODE: 'cli', AI_CLI_PATH: join(process.cwd(), 'data', 'no-such-ai-cli'), AI_TIMEOUT_MS: '5000' });
+      await createDraftAfterPreparation(request, task.id, { AI_MODE: 'cli', AI_CLI_PATH: join(process.cwd(), 'data', 'no-such-ai-cli'), AI_TIMEOUT_MS: '5000' });
       const artifacts = await request.get(`/api/tasks/${task.id}/artifacts`);
       const body = await artifacts.json() as { artifacts: Array<{ mode: string; fallbackReason: string | null; modeLabel: string }> };
       expect(body.artifacts.at(-1)).toMatchObject({ mode: 'mock_fallback', fallbackReason: 'CLI_NOT_FOUND' });
@@ -108,6 +114,7 @@ for (const viewport of viewports) {
       const { task } = await response.json() as { task: { id: string } };
       await request.post(`/api/tasks/${task.id}/prepare`, { headers: { 'idempotency-key': `empty-${viewport.name}` } });
       runWorker({ AI_MODE: 'cli', AI_CLI_PATH: join(process.cwd(), 'tests', 'fixtures', 'fake-ai-cli.mjs'), AI_TIMEOUT_MS: '10000' });
+      await createDraftAfterPreparation(request, task.id, { AI_MODE: 'cli', AI_CLI_PATH: fakeCli, AI_TIMEOUT_MS: '10000' });
       await page.goto(`/tasks/${task.id}`);
       await expect(page.getByRole('region', { name: 'AIの準備結果' }).locator('.mode-badge')).toHaveText('AI生成');
     });
@@ -144,6 +151,7 @@ for (const viewport of viewports) {
       const task = await createTask(request, `revise-ai-${viewport.name}`);
       await request.post(`/api/tasks/${task.id}/prepare`, { headers: { 'idempotency-key': `revise-ai-${viewport.name}` } });
       runWorker({ AI_MODE: 'cli', AI_CLI_PATH: fakeCli, AI_TIMEOUT_MS: '10000' });
+      await createDraftAfterPreparation(request, task.id, { AI_MODE: 'cli', AI_CLI_PATH: fakeCli, AI_TIMEOUT_MS: '10000' });
       await page.goto(`/tasks/${task.id}/review`);
       await expect(page.getByRole('heading', { name: 'v1' })).toBeVisible();
       await expect(page.locator('.revision-notice')).toContainText('初版はワーカーの設定');
@@ -170,6 +178,7 @@ for (const viewport of viewports) {
       const task = await createTask(request, `revise-fb-${viewport.name}`);
       await request.post(`/api/tasks/${task.id}/prepare`, { headers: { 'idempotency-key': `revise-fb-${viewport.name}` } });
       runWorker({ AI_MODE: 'cli', AI_CLI_PATH: fakeCli, AI_TIMEOUT_MS: '10000' });
+      await createDraftAfterPreparation(request, task.id, { AI_MODE: 'cli', AI_CLI_PATH: fakeCli, AI_TIMEOUT_MS: '10000' });
       await page.goto(`/tasks/${task.id}/review`);
       await page.getByLabel('修正指示').fill('FAKE_CLI_EXIT_1 失敗させる');
       await page.getByRole('button', { name: '修正版を作る' }).click();
@@ -240,6 +249,15 @@ function workerEnv(extraEnv: Record<string, string>): NodeJS.ProcessEnv {
   env.BLOB_DIRECTORY = process.env.BLOB_DIRECTORY ?? join(process.cwd(), 'data', 'playwright-blobs');
   env.ARTIFACT_DIRECTORY = process.env.ARTIFACT_DIRECTORY ?? join(process.cwd(), 'data', 'playwright-artifacts');
   return env as NodeJS.ProcessEnv;
+}
+
+async function createDraftAfterPreparation(request: APIRequestContext, taskId: string, extraEnv: Record<string, string>) {
+  const artifacts = await (await request.get(`/api/tasks/${taskId}/artifacts`)).json() as { artifacts: unknown[] };
+  expect(artifacts.artifacts).toHaveLength(0);
+  const flow = await (await request.get(`/api/tasks/${taskId}/draft`)).json() as { breakdown: { latestVersionId: string | null; stepCount: number } };
+  expect(flow.breakdown.stepCount).toBeGreaterThan(0);
+  expect((await request.post(`/api/tasks/${taskId}/draft`, { data: { action: 'create', breakdownVersionId: flow.breakdown.latestVersionId, requestKey: `draft-${taskId}` } })).status()).toBe(202);
+  runWorker(extraEnv);
 }
 
 function runWorker(extraEnv: Record<string, string>) {

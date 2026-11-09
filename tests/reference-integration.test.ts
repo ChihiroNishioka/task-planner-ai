@@ -9,6 +9,7 @@ import { BreakdownStore } from '../src/adapters/breakdown-store';
 import { TaskStore } from '../src/adapters/task-store';
 import { ReferenceStore } from '../src/adapters/reference-store';
 import { PreparationStore } from '../src/adapters/preparation-store';
+import { DraftFlowStore } from '../src/adapters/draft-flow-store';
 import { ReviewStore } from '../src/adapters/review-store';
 import { CliAiAdapter, FallbackAiAdapter } from '../src/adapters/cli-ai';
 import { MockAiAdapter, type PreparationAdapter } from '../src/adapters/mock-ai';
@@ -16,9 +17,11 @@ import { withReferences } from '../src/adapters/with-references';
 import { POST } from '../src/app/api/tasks/[id]/feedback/route';
 
 const runtime = vi.hoisted(() => new Map<string, {
-  taskStore: TaskStore; preparationStore: PreparationStore; reviewStore: ReviewStore; preparationAdapter: PreparationAdapter;
+  taskStore: TaskStore; preparationStore: PreparationStore; draftFlowStore: DraftFlowStore; breakdownStore: BreakdownStore; reviewStore: ReviewStore; preparationAdapter: PreparationAdapter;
 }>());
 vi.mock('../src/adapters/runtime', () => ({
+  get draftFlowStore() { return runtime.get('active')!.draftFlowStore; },
+  get breakdownStore() { return runtime.get('active')!.breakdownStore; },
   get taskStore() { return runtime.get('active')!.taskStore; },
   get preparationStore() { return runtime.get('active')!.preparationStore; },
   get reviewStore() { return runtime.get('active')!.reviewStore; },
@@ -30,6 +33,8 @@ let tasks: TaskStore;
 let references: ReferenceStore;
 let preparations: PreparationStore;
 let reviews: ReviewStore;
+let draftFlow: DraftFlowStore;
+let breakdownStore: BreakdownStore;
 let prompts: string[];
 beforeEach(() => {
   directory = mkdtempSync(join(tmpdir(), 'reference-integration-'));
@@ -38,15 +43,17 @@ beforeEach(() => {
   references = new ReferenceStore(path);
   preparations = new PreparationStore(path, join(directory, 'artifacts'));
   reviews = new ReviewStore(path);
+  breakdownStore = new BreakdownStore(path);
+  draftFlow = new DraftFlowStore(path, join(directory, 'artifacts'));
   prompts = [];
   const adapter = new CliAiAdapter(async prompt => {
     prompts.push(prompt);
     return JSON.stringify({ steps: ['確認', '作成'], draftMarkdown: '# 統合テスト用の下書き' });
   });
-  runtime.set('active', { taskStore: tasks, preparationStore: preparations, reviewStore: reviews, preparationAdapter: withReferences(adapter, references) });
+  runtime.set('active', { taskStore: tasks, preparationStore: preparations, draftFlowStore: draftFlow, breakdownStore, reviewStore: reviews, preparationAdapter: withReferences(adapter, references) });
 });
 afterEach(() => {
-  reviews?.close(); preparations?.close(); references?.close(); tasks?.close();
+  draftFlow?.close(); breakdownStore?.close(); reviews?.close(); preparations?.close(); references?.close(); tasks?.close();
   if (directory) rmSync(directory, { recursive: true, force: true });
 });
 function feedback(id: string) {
