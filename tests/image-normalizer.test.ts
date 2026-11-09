@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import jpeg from 'jpeg-js';
 import { PNG } from 'pngjs';
 import { normalizeImage } from '../src/adapters/image-normalizer';
@@ -8,7 +9,7 @@ import { detectImageFormat, mockImageSuggestion, safeImageName } from '../src/do
 import { GPS_SENTINEL, syntheticJpeg, syntheticPng } from './helpers/synthetic-images';
 
 const directories: string[] = [];
-function directory() { const value = mkdtempSync('/workspace/dev/tp-image-runs/image-normalizer-'); directories.push(value); return value; }
+function directory() { const value = mkdtempSync(join(tmpdir(), 'image-normalizer-')); directories.push(value); return value; }
 afterEach(() => { for (const value of directories.splice(0)) rmSync(value, { recursive: true, force: true }); });
 function input(bytes: Buffer, mime = 'image/jpeg', name = 'synthetic.jpg') { return { bytes, mime, name }; }
 function fixture(name: string) { return readFileSync(join(process.cwd(), 'tests/fixtures/images', name)); }
